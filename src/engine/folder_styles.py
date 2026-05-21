@@ -3,6 +3,8 @@ import numpy as np
 import cv2
 import os
 from typing import Optional, Tuple, Dict
+import os
+from src.utils.paths import get_resource_path
 
 class FolderStyleEngine:
     def __init__(self, size: int = 1024):
@@ -10,7 +12,7 @@ class FolderStyleEngine:
         self.default_color = "#5ac8fa" 
         self._cache: Dict[Tuple[str, str, int], Image.Image] = {}
         # Path to the high-quality template provided by the user
-        self.template_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "res", "folder.png")
+        self.template_path = get_resource_path(os.path.join("res", "folder.png"))
 
     def create_folder_background(self, color: str = "#5ac8fa", preset: str = "generic") -> Image.Image:
         """Creates a folder background using the provided PNG template."""

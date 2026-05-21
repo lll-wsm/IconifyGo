@@ -16,9 +16,10 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("IconifyGo")
-        self.resize(700, 600)
-
+        self.resize(510, 555) # Tight initial size: 450(canvas) + 60(margins)
+        
         # Enable Glass/Translucent background
+
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
@@ -79,11 +80,11 @@ class MainWindow(QMainWindow):
         # Left Side (Canvas + BottomBar)
         self.left_widget = QWidget()
         self.left_layout = QVBoxLayout(self.left_widget)
-        self.left_layout.setContentsMargins(0, 0, 0, 0)
-        self.left_layout.setSpacing(0)
+        self.left_layout.setContentsMargins(30, 30, 30, 0) # Tight 30px margins on top/left/right
+        self.left_layout.setSpacing(30) # 30px gap below canvas (equidistant from top)
         
         self.canvas = IconifyCanvas()
-        self.left_layout.addWidget(self.canvas, 1)
+        self.left_layout.addWidget(self.canvas)
         self.left_layout.setAlignment(self.canvas, Qt.AlignCenter)
         
         self.bottom_bar = BottomBar()
@@ -154,6 +155,7 @@ class MainWindow(QMainWindow):
         # Right Side (Gallery)
         self.gallery = PreviewGallery()
         self.main_layout.addWidget(self.gallery)
+        self.gallery.hide() # Hide by default
         
         # Connect signals
         self.bottom_bar.remove_bg_clicked.connect(self.remove_background)
@@ -197,6 +199,7 @@ class MainWindow(QMainWindow):
 
         self.bottom_bar.erase_btn.setEnabled(False)
         self.bottom_bar.show_message("Removing watermark...")
+        self.bottom_bar.set_progress_active(True)
 
         self.inpaint_worker = InpaintWorker(params[0], params[1], strength=self.inpaint_strength)
         self.inpaint_worker.finished.connect(self.on_inpaint_done)
@@ -209,12 +212,13 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         self.bottom_bar.erase_btn.setEnabled(True)
         self.bottom_bar.show_message("Watermark removed successfully", 3000)
+        self.bottom_bar.set_progress_active(False)
 
     def on_inpaint_error(self, error_msg) -> None:
         """Handle inpaint failure."""
         QMessageBox.critical(self, "Error", f"Watermark removal failed: {error_msg}")
         self.bottom_bar.erase_btn.setEnabled(True)
-        self.statusBar().clearMessage()
+        self.bottom_bar.set_progress_active(False)
 
     def handle_mask_update(self, update_info: tuple) -> None:
         if self.image_processor.current_image is None:
@@ -276,6 +280,8 @@ class MainWindow(QMainWindow):
             pixmap = self.image_processor.get_qpixmap()
             if pixmap:
                 self.canvas.add_image(pixmap)
+            self.resize(710, 555) # Expand width for gallery (510 + 200)
+            self.gallery.show() # Reveal gallery
             self.refresh_all()
         else:
             QMessageBox.critical(self, "Error", f"Could not load image: {file_path}")
@@ -289,6 +295,7 @@ class MainWindow(QMainWindow):
 
         self.bottom_bar.remove_bg_btn.setEnabled(False)
         self.bottom_bar.show_message("Removing background...")
+        self.bottom_bar.set_progress_active(True)
 
         self.bg_worker = RembgWorker(self.image_processor.current_image, model_name=self.selected_model)
         self.bg_worker.finished.connect(self.on_bg_removed)
@@ -300,11 +307,12 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         self.bottom_bar.remove_bg_btn.setEnabled(True)
         self.bottom_bar.show_message("Background removed successfully", 3000)
+        self.bottom_bar.set_progress_active(False)
 
     def on_bg_error(self, error_msg) -> None:
         QMessageBox.critical(self, "Error", f"Background removal failed: {error_msg}")
         self.bottom_bar.remove_bg_btn.setEnabled(True)
-        self.statusBar().clearMessage()
+        self.bottom_bar.set_progress_active(False)
 
     def export_result(self, format_name: str) -> None:
         if self.image_processor.current_image is None:
@@ -318,7 +326,7 @@ class MainWindow(QMainWindow):
         from src.engine.processor import cv2
 
         styled_np = None
-        if selected_style in ["big_sur", "catalina", "classic"]:
+        if selected_style in ["big_sur", "catalina", "classic", "ios", "android"]:
             engine = IconStyleEngine()
             styled_np = engine.apply_style(rgba, selected_style)
         elif selected_style == "folder_center":

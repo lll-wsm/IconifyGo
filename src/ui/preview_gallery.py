@@ -20,7 +20,7 @@ class PreviewItem(QFrame):
         self.layout.setAlignment(Qt.AlignCenter)
         
         self.preview_label = QLabel()
-        self.preview_label.setFixedSize(100, 100)
+        self.preview_label.setFixedSize(140, 140)
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.preview_label)
         
@@ -30,7 +30,7 @@ class PreviewItem(QFrame):
         self.layout.addWidget(self.text_label)
 
     def set_pixmap(self, pixmap: QPixmap):
-        self.preview_label.setPixmap(pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.preview_label.setPixmap(pixmap.scaled(140, 140, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -50,7 +50,7 @@ class PreviewGallery(QScrollArea):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWidgetResizable(True)
-        self.setFixedWidth(180)
+        self.setFixedWidth(200)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setStyleSheet("QScrollArea { border: none; background: transparent; border-left: 1px solid rgba(255, 255, 255, 10); }")
         
@@ -72,7 +72,9 @@ class PreviewGallery(QScrollArea):
         styles = [
             ("macOS Big Sur", "big_sur"),
             ("macOS Catalina", "catalina"),
-            ("macOS Classic", "classic")
+            ("macOS Classic", "classic"),
+            ("iOS App Icon", "ios"),
+            ("Android Icon", "android")
         ]
         for label, style_id in styles:
             item = PreviewItem(label, style_id)

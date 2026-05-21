@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QSlider, QLabel, 
-    QComboBox, QFrame, QButtonGroup, QMenu, QPlainTextEdit, QColorDialog
+    QComboBox, QFrame, QButtonGroup, QMenu, QPlainTextEdit, QColorDialog, QProgressBar
 )
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtGui import QPainter, QColor, QAction, QFontDatabase, QFont
@@ -209,18 +209,35 @@ class BottomBar(QWidget):
         self.layout.setSpacing(15)
         self.main_container.addWidget(self.bar_widget)
 
-        # 2. Bottom Status Label
+        # 2. Bottom Status Label & Progress
+        self.status_container = QWidget()
+        self.status_container.setFixedHeight(20)
+        self.status_layout = QHBoxLayout(self.status_container)
+        self.status_layout.setContentsMargins(15, 0, 15, 0)
+        self.status_layout.setSpacing(10)
+        
         self.status_label = QLabel("")
-        self.status_label.setFixedHeight(20)
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setStyleSheet("""
+        self.status_label.setStyleSheet("color: rgba(255, 255, 255, 120); font-size: 10px; background: transparent;")
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0) # Indeterminate
+        self.progress_bar.setFixedHeight(2)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background: rgba(255, 255, 255, 10); border: none; border-radius: 1px; }
+            QProgressBar::chunk { background-color: #bf5af2; border-radius: 1px; }
+        """)
+        self.progress_bar.hide()
+        
+        self.status_layout.addWidget(self.status_label)
+        self.status_layout.addWidget(self.progress_bar, 1) # Progress bar takes remaining space
+        
+        self.status_container.setStyleSheet("""
             background: rgba(0, 0, 0, 60);
-            color: rgba(255, 255, 255, 120);
-            font-size: 10px;
             border-bottom-left-radius: 20px;
             border-bottom-right-radius: 20px;
         """)
-        self.main_container.addWidget(self.status_label)
+        self.main_container.addWidget(self.status_container)
 
         # 1. Mask Tools Group (Iconified)
         self.tool_group = QButtonGroup(self)
@@ -300,6 +317,9 @@ class BottomBar(QWidget):
         if timeout > 0:
             from PySide6.QtCore import QTimer
             QTimer.singleShot(timeout, lambda: self.status_label.setText("") if self.status_label.text() == message else None)
+
+    def set_progress_active(self, active: bool):
+        self.progress_bar.setVisible(active)
 
     def _create_styled_menu(self):
         menu = QMenu(self)

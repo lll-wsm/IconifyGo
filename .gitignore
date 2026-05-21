@@ -10,5 +10,10 @@ tests/
 *.onnx
 .antigravitycli/
 docs/
+IconifyGo.spec
+dist/
+build/
+*.egg-info/
 CLAUDE.md
 GEMINI.md
+*.log

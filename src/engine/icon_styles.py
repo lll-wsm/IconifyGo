@@ -12,7 +12,56 @@ class IconStyleEngine:
             "big_sur": (self.create_big_sur_background, 0.6),
             "catalina": (self.create_catalina_background, 0.65),
             "classic": (self.create_classic_background, 0.6),
+            "ios": (self.create_ios_background, 0.7),
+            "android": (self.create_android_background, 0.7),
         }
+
+    def create_ios_background(self) -> Image.Image:
+        """Creates an iOS style squircle background."""
+        base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
+        
+        # iOS Squircle (usually takes more space than macOS Big Sur)
+        icon_size = int(self.size * 0.94)
+        padding = (self.size - icon_size) // 2
+        corner_radius = int(icon_size * 0.22)
+        
+        rect = [padding, padding, padding + icon_size, padding + icon_size]
+        
+        # iOS icons don't usually have external shadows on the home screen, 
+        # but for preview we add a very tiny one.
+        mask = Image.new("L", (self.size, self.size), 0)
+        m_draw = ImageDraw.Draw(mask)
+        m_draw.rounded_rectangle(rect, radius=corner_radius, fill=255)
+        
+        # Light gray gradient
+        bg = Image.new("RGBA", (self.size, self.size), (255, 255, 255, 255))
+        g_draw = ImageDraw.Draw(bg)
+        for i in range(padding, padding + icon_size):
+            progress = (i - padding) / icon_size
+            gray = int(245 + progress * 10)
+            g_draw.line([(padding, i), (padding + icon_size, i)], fill=(gray, gray, gray, 255))
+            
+        base.paste(bg, (0, 0), mask)
+        return base
+
+    def create_android_background(self) -> Image.Image:
+        """Creates an Android Adaptive Icon style (circular) background."""
+        base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
+        
+        icon_size = int(self.size * 0.9)
+        padding = (self.size - icon_size) // 2
+        rect = [padding, padding, padding + icon_size, padding + icon_size]
+        
+        # Mask for circle
+        mask = Image.new("L", (self.size, self.size), 0)
+        m_draw = ImageDraw.Draw(mask)
+        m_draw.ellipse(rect, fill=255)
+        
+        # Material Design light gray background
+        bg = Image.new("RGBA", (self.size, self.size), (250, 250, 250, 255))
+        base.paste(bg, (0, 0), mask)
+        
+        return base
 
     def create_big_sur_background(self) -> Image.Image:
         """Creates a Big Sur style squircle background with a subtle gradient and shadow."""

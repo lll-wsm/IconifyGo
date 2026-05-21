@@ -15,6 +15,11 @@ class IconifyCanvas(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
         
+        # Make the view itself transparent
+        self.setStyleSheet("background: transparent; border: none;")
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.viewport().setAttribute(Qt.WA_TranslucentBackground)
+        
         self.scene.setSceneRect(-5000, -5000, 10000, 10000)
         self.setFixedSize(450, 450)
         
@@ -80,13 +85,14 @@ class IconifyCanvas(QGraphicsView):
     def setup_background(self) -> None:
         size = 20
         pixmap = QPixmap(size * 2, size * 2)
-        pixmap.fill(Qt.transparent)
+        pixmap.fill(QColor(0, 0, 0, 0)) # Explicitly fully transparent
         painter = QPainter(pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
         
-        # Tile 1: Very subtle white/glass
-        color1 = QColor(255, 255, 255, 10)
-        # Tile 2: Subtle purple tint
-        color2 = QColor(191, 90, 242, 15)
+        # Tile 1: Extreme subtle white/glass
+        color1 = QColor(255, 255, 255, 5)
+        # Tile 2: Extreme subtle purple tint
+        color2 = QColor(191, 90, 242, 7)
         
         painter.fillRect(0, 0, size, size, color1)
         painter.fillRect(size, size, size, size, color1)

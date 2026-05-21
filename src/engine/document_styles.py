@@ -2,15 +2,14 @@ from PIL import Image, ImageDraw
 import numpy as np
 import cv2
 import os
-from typing import Optional
+import os
+from src.utils.paths import get_resource_path
 
 class DocumentStyleEngine:
     def __init__(self, size: int = 1024):
         self.size = size
-        self.template_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "res", "documents.png"
-        )
+        self.template_path = get_resource_path(os.path.join("res", "documents.png"))
+
         self._cache: Optional[Image.Image] = None
 
     def get_document_background(self) -> Image.Image:

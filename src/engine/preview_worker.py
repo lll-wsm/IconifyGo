@@ -13,13 +13,14 @@ class PreviewWorker(QThread):
     def __init__(self, rgba_image: np.ndarray):
         super().__init__()
         self.rgba = rgba_image.copy()
-        self.icon_engine = IconStyleEngine()
-        self.folder_engine = FolderStyleEngine()
-        self.document_engine = DocumentStyleEngine()
+        self.preview_size = 256
+        self.icon_engine = IconStyleEngine(size=self.preview_size)
+        self.folder_engine = FolderStyleEngine(size=self.preview_size)
+        self.document_engine = DocumentStyleEngine(size=self.preview_size)
 
     def run(self):
         # 1. App Icons
-        for style_id in ["big_sur", "catalina", "classic"]:
+        for style_id in ["big_sur", "catalina", "classic", "ios", "android"]:
             if self.isInterruptionRequested(): return
             styled_np = self.icon_engine.apply_style(self.rgba, style_id)
             if styled_np is not None:
