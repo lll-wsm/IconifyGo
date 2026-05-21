@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self.preview_worker = None
         self.selected_model = "isnet-general-use"
         self.inpaint_strength = "medium"
+        self.style_bg_colors = {}
 
         # Timer for throttled refresh of the MAIN CANVAS ONLY (for smooth drawing)
         self.refresh_timer = QTimer()
@@ -80,7 +81,7 @@ class MainWindow(QMainWindow):
         # Left Side (Canvas + BottomBar)
         self.left_widget = QWidget()
         self.left_layout = QVBoxLayout(self.left_widget)
-        self.left_layout.setContentsMargins(30, 30, 30, 0) # Tight 30px margins on top/left/right
+        self.left_layout.setContentsMargins(0, 30, 0, 0) # 30px top margin, 0px left/right/bottom margins so bottom bar spans window width
         self.left_layout.setSpacing(30) # 30px gap below canvas (equidistant from top)
         
         self.canvas = IconifyCanvas()
@@ -166,10 +167,13 @@ class MainWindow(QMainWindow):
         self.bottom_bar.erase_watermark_clicked.connect(self.erase_watermark)
         self.bottom_bar.reset_clicked.connect(self.reset_image)
         self.bottom_bar.text_added.connect(self.on_text_added)
+        self.bottom_bar.bg_color_changed.connect(self.on_bg_color_changed)
+        self.bottom_bar.sketch_clicked.connect(self.apply_sketch)
 
         self.canvas.mask_updated.connect(self.handle_mask_update)
         self.canvas.canvas_clicked.connect(self.open_file)
         self.canvas.file_dropped.connect(self.open_file_from_path)
+        self.gallery.style_selected.connect(self.on_preview_style_selected)
 
     def on_text_added(self, text, params):
         self.image_processor.add_text_overlay(text, **params)
@@ -255,6 +259,75 @@ class MainWindow(QMainWindow):
         # Trigger debounced async update
         self.preview_timer.start(300)
 
+    def on_bg_color_changed(self, color) -> None:
+        """Handle background color change from the toolbar palette button."""
+        from PySide6.QtGui import QColor
+        if isinstance(color, QColor):
+            selected_style = self.gallery.selected_style_id
+            self.style_bg_colors[selected_style] = color
+            self.canvas.set_bg_color(color)
+            self.bottom_bar.current_bg_color = color
+            # Re-generate active styled preview if any
+            if selected_style != "original":
+                self.on_preview_style_selected(selected_style)
+
+    def on_preview_style_selected(self, style_id: str) -> None:
+        """Generate styled image and display it in the canvas when a preview is clicked."""
+        from PySide6.QtGui import QColor
+        bg = self.style_bg_colors.get(style_id, QColor(0, 0, 0, 0))
+        self.canvas.set_bg_color(bg)
+        self.bottom_bar.current_bg_color = bg
+
+        rgba = self.image_processor.get_rgba_image(show_watermark=False)
+        if rgba is None:
+            return
+
+        if style_id == "original":
+            self.canvas.clear_preview()
+            return
+
+        import cv2
+        from PySide6.QtGui import QImage, QPixmap
+
+        # Get customized background color and format it for different engines
+        bg_tuple = (bg.red(), bg.green(), bg.blue(), bg.alpha())
+        if bg.alpha() == 0:
+            hex_color = "#5ac8fa"
+            doc_color = (255, 255, 255)
+        else:
+            r, g, b = bg_tuple[:3]
+            hex_color = f"#{r:02x}{g:02x}{b:02x}"
+            doc_color = (r, g, b)
+
+        styled_np = None
+        if style_id in ["big_sur", "catalina", "classic", "ios", "android"]:
+            engine = IconStyleEngine()
+            engine.background_color = bg_tuple
+            styled_np = engine.apply_style(rgba, style_id)
+        elif style_id == "folder_center":
+            engine = FolderStyleEngine()
+            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="center")
+        elif style_id == "folder_cover":
+            engine = FolderStyleEngine()
+            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="cover")
+        elif style_id == "document_center":
+            engine = DocumentStyleEngine()
+            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="center")
+        elif style_id == "document_cover":
+            engine = DocumentStyleEngine()
+            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="cover")
+
+        if styled_np is None:
+            self.canvas.clear_preview()
+            return
+
+        # Convert BGRA numpy to QPixmap
+        height, width = styled_np.shape[:2]
+        rgb_img = cv2.cvtColor(styled_np, cv2.COLOR_BGRA2RGBA)
+        qimg = QImage(rgb_img.data, width, height, 4 * width, QImage.Format_RGBA8888).copy()
+        pixmap = QPixmap.fromImage(qimg)
+        self.canvas.show_preview(pixmap)
+
     def _run_async_preview(self):
         rgba = self.image_processor.get_rgba_image(show_watermark=False)
         if rgba is None: return
@@ -264,7 +337,9 @@ class MainWindow(QMainWindow):
             self.preview_worker.requestInterruption()
             self.preview_worker.wait()
 
-        self.preview_worker = PreviewWorker(rgba)
+        # Always pass transparent background color to the preview generator
+        # so the gallery previews in the sidebar always show their default style/color.
+        self.preview_worker = PreviewWorker(rgba, (0, 0, 0, 0))
         self.preview_worker.style_ready.connect(self.gallery.update_style_preview)
         self.preview_worker.start()
 
@@ -277,6 +352,8 @@ class MainWindow(QMainWindow):
 
     def open_file_from_path(self, file_path: str) -> None:
         if self.image_processor.load_image(file_path):
+            self.style_bg_colors = {}
+            self.gallery.select_style("original")
             pixmap = self.image_processor.get_qpixmap()
             if pixmap:
                 self.canvas.add_image(pixmap)
@@ -314,6 +391,16 @@ class MainWindow(QMainWindow):
         self.bottom_bar.remove_bg_btn.setEnabled(True)
         self.bottom_bar.set_progress_active(False)
 
+    def apply_sketch(self, kernel_size: int) -> None:
+        """Applies pencil sketch filter with specified kernel size to the current image."""
+        if self.image_processor.current_image is None:
+            QMessageBox.warning(self, "Warning", "Please load an image first.")
+            return
+
+        self.image_processor.apply_sketch_filter(kernel_size)
+        self.bottom_bar.show_message("Converted to sketch style", 3000)
+        self.refresh_all()
+
     def export_result(self, format_name: str) -> None:
         if self.image_processor.current_image is None:
             QMessageBox.warning(self, "Warning", "Please load and process an image first.")
@@ -324,29 +411,48 @@ class MainWindow(QMainWindow):
 
         from PIL import Image
         from src.engine.processor import cv2
+        from PySide6.QtGui import QColor
+
+        # Get customized background color and format it for different engines
+        bg = self.style_bg_colors.get(selected_style, QColor(0, 0, 0, 0))
+        bg_tuple = (bg.red(), bg.green(), bg.blue(), bg.alpha())
+        if bg.alpha() == 0:
+            hex_color = "#5ac8fa"
+            doc_color = (255, 255, 255)
+        else:
+            r, g, b = bg_tuple[:3]
+            hex_color = f"#{r:02x}{g:02x}{b:02x}"
+            doc_color = (r, g, b)
 
         styled_np = None
         if selected_style in ["big_sur", "catalina", "classic", "ios", "android"]:
             engine = IconStyleEngine()
+            engine.background_color = bg_tuple
             styled_np = engine.apply_style(rgba, selected_style)
         elif selected_style == "folder_center":
             engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(rgba, layout="center")
+            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="center")
         elif selected_style == "folder_cover":
             engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(rgba, layout="cover")
+            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="cover")
         elif selected_style == "document_center":
             engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(rgba, layout="center")
+            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="center")
         elif selected_style == "document_cover":
             engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(rgba, layout="cover")
+            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="cover")
 
         if styled_np is None:
             styled_np = rgba
 
         styled_rgb = cv2.cvtColor(styled_np, cv2.COLOR_BGRA2RGBA)
         styled_pil = Image.fromarray(styled_rgb)
+        
+        # Composite background color behind original image if set
+        if selected_style == "original":
+            if bg.alpha() > 0:
+                bg_layer = Image.new("RGBA", styled_pil.size, (bg.red(), bg.green(), bg.blue(), bg.alpha()))
+                styled_pil = Image.alpha_composite(bg_layer, styled_pil)
         
         if ".icns" in format_name:
             file_path, _ = QFileDialog.getSaveFileName(self, "Save ICNS Icon", "", "macOS Icon (*.icns)")

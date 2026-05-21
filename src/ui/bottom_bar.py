@@ -184,9 +184,12 @@ class BottomBar(QWidget):
     erase_watermark_clicked = Signal(str)
     reset_clicked = Signal()
     text_added = Signal(str, dict)
+    bg_color_changed = Signal(object)  # QColor
+    sketch_clicked = Signal(int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        self.current_bg_color = QColor(0, 0, 0, 0)
         self.init_ui()
 
     def init_ui(self) -> None:
@@ -197,10 +200,11 @@ class BottomBar(QWidget):
 
         # 1. Top Bar (Tools)
         self.bar_widget = QWidget()
+        self.bar_widget.setObjectName("BottomBarWidget")
         self.bar_widget.setFixedHeight(55)
         self.bar_widget.setStyleSheet("""
-            QWidget { 
-                background: rgba(0, 0, 0, 40); 
+            #BottomBarWidget { 
+                background: transparent; 
                 border-top: 1px solid rgba(255, 255, 255, 10);
             }
         """)
@@ -232,10 +236,13 @@ class BottomBar(QWidget):
         self.status_layout.addWidget(self.status_label)
         self.status_layout.addWidget(self.progress_bar, 1) # Progress bar takes remaining space
         
+        self.status_container.setObjectName("BottomStatusContainer")
         self.status_container.setStyleSheet("""
-            background: rgba(0, 0, 0, 60);
-            border-bottom-left-radius: 20px;
-            border-bottom-right-radius: 20px;
+            #BottomStatusContainer {
+                background: transparent;
+                border-bottom-left-radius: 20px;
+                border-bottom-right-radius: 20px;
+            }
         """)
         self.main_container.addWidget(self.status_container)
 
@@ -299,10 +306,20 @@ class BottomBar(QWidget):
         self.text_btn.clicked.connect(self.show_text_menu)
         self.layout.addWidget(self.text_btn)
 
+        self.sketch_btn = SvgIconButton("pencil", "Convert to Sketch Style")
+        self.sketch_btn.setCheckable(False)
+        self.sketch_btn.clicked.connect(self.show_sketch_menu)
+        self.layout.addWidget(self.sketch_btn)
+
         self.reset_btn = SvgIconButton("reset", "Reset to Original Image")
         self.reset_btn.setCheckable(False)
         self.reset_btn.clicked.connect(self.reset_clicked.emit)
         self.layout.addWidget(self.reset_btn)
+
+        self.palette_btn = SvgIconButton("palette", "Background Color")
+        self.palette_btn.setCheckable(False)
+        self.palette_btn.clicked.connect(self.show_bg_color_picker)
+        self.layout.addWidget(self.palette_btn)
 
         self.layout.addStretch()
 
@@ -407,3 +424,49 @@ class BottomBar(QWidget):
         content.rejected.connect(popover.close)
         popover.set_widget(content)
         popover.show_above(self.text_btn)
+
+    def show_bg_color_picker(self):
+        initial_color = self.current_bg_color
+        if initial_color.alpha() == 0:
+            initial_color = QColor(255, 255, 255, 255)
+        color = QColorDialog.getColor(
+            initial_color,
+            self,
+            "选择背景颜色",
+            QColorDialog.ShowAlphaChannel
+        )
+        if color.isValid():
+            self.bg_color_changed.emit(color)
+
+    def show_sketch_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background: #1e1e1e;
+                border: 1px solid #333;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                color: #eee;
+                padding: 6px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background: #bf5af2;
+            }
+        """)
+        
+        options = [
+            ("Fine Detail (精细)", 9),
+            ("Classic Sketch (经典)", 21),
+            ("Bold Sketch (浓重)", 51)
+        ]
+        
+        for name, kernel_size in options:
+            action = QAction(name, self)
+            action.triggered.connect(lambda checked=False, k_size=kernel_size: self.sketch_clicked.emit(k_size))
+            menu.addAction(action)
+            
+        pos = self.sketch_btn.mapToGlobal(QPoint(0, -menu.sizeHint().height()))
+        menu.exec(pos)

@@ -26,10 +26,28 @@ class FolderStyleEngine:
             if template.size != (self.size, self.size):
                 template = template.resize((self.size, self.size), Image.Resampling.LANCZOS)
             
-            # If color is not the default macOS blue, we can attempt to tint it
-            # For now, we use the template directly as requested.
-            # (Optional: Add tinting logic here if needed)
-            base = template
+            if color.lower() != "#5ac8fa":
+                # Convert template to grayscale
+                r, g, b, a = template.split()
+                gray = ImageOps.grayscale(template)
+                
+                # Convert hex color to RGB
+                def hex_to_rgb(h):
+                    h = h.lstrip('#')
+                    if len(h) == 3:
+                        h = ''.join(c*2 for c in h)
+                    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+                
+                try:
+                    target_rgb = hex_to_rgb(color)
+                    tinted = ImageOps.colorize(gray, black="#000000", white="#ffffff", mid=target_rgb)
+                    tinted = tinted.convert("RGBA")
+                    tinted.putalpha(a)
+                    base = tinted
+                except Exception:
+                    base = template
+            else:
+                base = template
         else:
             # Fallback to procedural drawing if template is missing
             base = self._create_fallback_folder(color)
@@ -68,6 +86,11 @@ class FolderStyleEngine:
         
         logo_rgba = cv2.cvtColor(logo_cv, cv2.COLOR_BGRA2RGBA)
         logo_pil = Image.fromarray(logo_rgba)
+
+        # Crop to content to ensure centering is based on the subject
+        bbox = logo_pil.getbbox()
+        if bbox:
+            logo_pil = logo_pil.crop(bbox)
 
         if opacity < 1.0:
             r, g, b, a = logo_pil.split()

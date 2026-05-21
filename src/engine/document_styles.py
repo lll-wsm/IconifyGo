@@ -10,25 +10,36 @@ class DocumentStyleEngine:
         self.size = size
         self.template_path = get_resource_path(os.path.join("res", "documents.png"))
 
-        self._cache: Optional[Image.Image] = None
+        self._cache: dict = {}
 
-    def get_document_background(self) -> Image.Image:
-        """Loads and caches the document template image at standard size."""
-        if self._cache is not None:
-            return self._cache.copy()
+    def get_document_background(self, color: tuple = (255, 255, 255)) -> Image.Image:
+        """Loads and caches the document template image at standard size with dynamic color tinting."""
+        if color in self._cache:
+            return self._cache[color].copy()
 
         if os.path.exists(self.template_path):
             template = Image.open(self.template_path).convert("RGBA")
             if template.size != (self.size, self.size):
                 template = template.resize((self.size, self.size), Image.Resampling.LANCZOS)
-            self._cache = template
+            
+            if color != (255, 255, 255):
+                from PIL import ImageOps
+                r, g, b, a = template.split()
+                gray = ImageOps.grayscale(template)
+                tinted = ImageOps.colorize(gray, black="#000000", white="#ffffff", mid=color)
+                tinted = tinted.convert("RGBA")
+                tinted.putalpha(a)
+                base = tinted
+            else:
+                base = template
+            self._cache[color] = base
         else:
             # Fallback to procedural document shape
-            self._cache = self._create_fallback_document()
+            self._cache[color] = self._create_fallback_document(color)
             
-        return self._cache.copy()
+        return self._cache[color].copy()
 
-    def _create_fallback_document(self) -> Image.Image:
+    def _create_fallback_document(self, color: tuple) -> Image.Image:
         """Procedural fallback if PNG is not found."""
         base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(base)
@@ -36,15 +47,20 @@ class DocumentStyleEngine:
         padding_x = (self.size - width) // 2
         padding_y = (self.size - height) // 2
         
+        # Ensure color format is RGB
+        fill_color = color[:3]
+        if len(fill_color) < 3:
+            fill_color = (255, 255, 255)
+            
         draw.rectangle(
             [padding_x, padding_y, padding_x + width, padding_y + height], 
-            fill=(255, 255, 255, 255), 
+            fill=fill_color + (255,), 
             outline=(200, 200, 200, 255), 
             width=4
         )
         return base
 
-    def apply_document_style(self, logo_cv: np.ndarray, opacity: float = 1.0, scale: float = 0.5, layout: str = "center") -> np.ndarray:
+    def apply_document_style(self, logo_cv: np.ndarray, color: tuple = (255, 255, 255), opacity: float = 1.0, scale: float = 0.5, layout: str = "center") -> np.ndarray:
         """Applies document style using the PNG template."""
         h, w = logo_cv.shape[:2]
         if max(h, w) > 2048:
@@ -54,10 +70,15 @@ class DocumentStyleEngine:
 
         self.size = 1024 # Standardize on template size
 
-        background = self.get_document_background()
+        background = self.get_document_background(color)
         
         logo_rgba = cv2.cvtColor(logo_cv, cv2.COLOR_BGRA2RGBA)
         logo_pil = Image.fromarray(logo_rgba)
+
+        # Crop to content to ensure centering is based on the subject
+        bbox = logo_pil.getbbox()
+        if bbox:
+            logo_pil = logo_pil.crop(bbox)
 
         if opacity < 1.0:
             r, g, b, a = logo_pil.split()

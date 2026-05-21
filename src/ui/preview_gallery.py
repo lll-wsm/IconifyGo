@@ -18,9 +18,10 @@ class PreviewItem(QFrame):
         
         self.layout = QVBoxLayout(self)
         self.layout.setAlignment(Qt.AlignCenter)
+        self.layout.setContentsMargins(15, 15, 15, 15)
         
         self.preview_label = QLabel()
-        self.preview_label.setFixedSize(140, 140)
+        self.preview_label.setFixedSize(130, 130)
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.preview_label)
         
@@ -30,7 +31,7 @@ class PreviewItem(QFrame):
         self.layout.addWidget(self.text_label)
 
     def set_pixmap(self, pixmap: QPixmap):
-        self.preview_label.setPixmap(pixmap.scaled(140, 140, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.preview_label.setPixmap(pixmap.scaled(130, 130, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -61,15 +62,16 @@ class PreviewGallery(QScrollArea):
         self.layout.setSpacing(15)
         
         self.previews = {}
-        self.selected_style_id = "big_sur"
+        self.selected_style_id = "original"
         self.setup_previews()
         
         self.setWidget(self.container)
-        self.select_style("big_sur")
+        self.select_style("original")
 
     def setup_previews(self):
         # App Icons
         styles = [
+            ("No Background", "original"),
             ("macOS Big Sur", "big_sur"),
             ("macOS Catalina", "catalina"),
             ("macOS Classic", "classic"),

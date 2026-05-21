@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QLabel, QGraphicsEllipseItem, QGraphicsRectItem
 from PySide6.QtGui import QBrush, QColor, QPainter, QPixmap, QWheelEvent, QMouseEvent, QPen, QPainterPath
-from PySide6.QtCore import Qt, Signal, QPointF, QTimer, QPoint
+from PySide6.QtCore import Qt, Signal, QPointF, QTimer, QPoint, QRectF
 import numpy as np
 import time
 from typing import Optional
@@ -35,6 +35,9 @@ class IconifyCanvas(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.image_item: Optional[QGraphicsPixmapItem] = None
+        self.bg_color_item: Optional[QGraphicsRectItem] = None
+        self.preview_item: Optional[QGraphicsPixmapItem] = None
+        self.bg_color = QColor(0, 0, 0, 0)  # Transparent by default
         
         # Dynamic Render Quality Timer
         self.zoom_timer = QTimer()
@@ -152,8 +155,21 @@ class IconifyCanvas(QGraphicsView):
             if item != self.placeholder_proxy and item != self.brush_cursor:
                 self.scene.removeItem(item)
         self.placeholder_proxy.hide()
+        self.bg_color_item = None
+        self.preview_item = None
+        
+        # Background color rectangle (behind the image, Z=0)
+        rect = QRectF(-pixmap.width() / 2, -pixmap.height() / 2, pixmap.width(), pixmap.height())
+        self.bg_color_item = QGraphicsRectItem(rect)
+        self.bg_color_item.setBrush(QBrush(self.bg_color))
+        self.bg_color_item.setPen(QPen(Qt.NoPen))
+        self.bg_color_item.setZValue(0)
+        self.scene.addItem(self.bg_color_item)
+        
+        # Main image (Z=1)
         self.image_item = self.scene.addPixmap(pixmap)
         self.image_item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
+        self.image_item.setZValue(1)
         
         # Add a subtle "glass" shadow/glow to the image
         from PySide6.QtWidgets import QGraphicsDropShadowEffect
@@ -166,6 +182,50 @@ class IconifyCanvas(QGraphicsView):
         self.resetTransform()
         self.fit_in_view()
         return self.image_item
+
+    def set_bg_color(self, color: QColor) -> None:
+        """Set the background color behind the image."""
+        self.bg_color = color
+        if self.bg_color_item:
+            self.bg_color_item.setBrush(QBrush(color))
+
+    def show_preview(self, pixmap: QPixmap) -> None:
+        """Show a styled preview overlay on top of the image."""
+        # Remove existing preview
+        if self.preview_item:
+            self.scene.removeItem(self.preview_item)
+            self.preview_item = None
+        
+        if pixmap is None:
+            return
+        
+        # Hide the original image so only the styled preview + bg color are visible
+        if self.image_item:
+            self.image_item.hide()
+            
+        self.preview_item = self.scene.addPixmap(pixmap)
+        self.preview_item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
+        self.preview_item.setZValue(2)  # On top of everything
+        
+        # Hide the background color item for previews so the template shape is visible
+        if self.bg_color_item:
+            self.bg_color_item.hide()
+
+    def clear_preview(self) -> None:
+        """Remove the styled preview overlay and restore the original image."""
+        if self.preview_item:
+            self.scene.removeItem(self.preview_item)
+            self.preview_item = None
+        
+        # Show the original image again
+        if self.image_item:
+            self.image_item.show()
+            # Restore bg_color_item to match original image dimensions and show it
+            if self.bg_color_item:
+                pm = self.image_item.pixmap()
+                rect = QRectF(-pm.width() / 2, -pm.height() / 2, pm.width(), pm.height())
+                self.bg_color_item.setRect(rect)
+                self.bg_color_item.show()
 
     def fit_in_view(self) -> None:
         if self.image_item:

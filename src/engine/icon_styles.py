@@ -16,6 +16,24 @@ class IconStyleEngine:
             "android": (self.create_android_background, 0.7),
         }
 
+    def _create_gradient_background(self, rect, factor: float) -> Image.Image:
+        padding = rect[1]
+        icon_size = rect[3] - rect[1]
+        bg = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
+        g_draw = ImageDraw.Draw(bg)
+        
+        r, g, b = self.background_color[:3]
+        a = self.background_color[3] if len(self.background_color) > 3 else 255
+        
+        for i in range(padding, padding + icon_size):
+            progress = (i - padding) / icon_size
+            current_factor = factor + progress * (1.0 - factor)
+            curr_r = int(max(0, min(255, r * current_factor)))
+            curr_g = int(max(0, min(255, g * current_factor)))
+            curr_b = int(max(0, min(255, b * current_factor)))
+            g_draw.line([(rect[0], i), (rect[2], i)], fill=(curr_r, curr_g, curr_b, a))
+        return bg
+
     def create_ios_background(self) -> Image.Image:
         """Creates an iOS style squircle background."""
         base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
@@ -33,13 +51,8 @@ class IconStyleEngine:
         m_draw = ImageDraw.Draw(mask)
         m_draw.rounded_rectangle(rect, radius=corner_radius, fill=255)
         
-        # Light gray gradient
-        bg = Image.new("RGBA", (self.size, self.size), (255, 255, 255, 255))
-        g_draw = ImageDraw.Draw(bg)
-        for i in range(padding, padding + icon_size):
-            progress = (i - padding) / icon_size
-            gray = int(245 + progress * 10)
-            g_draw.line([(padding, i), (padding + icon_size, i)], fill=(gray, gray, gray, 255))
+        # Light gray gradient dynamically tinted
+        bg = self._create_gradient_background(rect, 0.96)
             
         base.paste(bg, (0, 0), mask)
         return base
@@ -57,8 +70,8 @@ class IconStyleEngine:
         m_draw = ImageDraw.Draw(mask)
         m_draw.ellipse(rect, fill=255)
         
-        # Material Design light gray background
-        bg = Image.new("RGBA", (self.size, self.size), (250, 250, 250, 255))
+        # Material Design background dynamically tinted
+        bg = Image.new("RGBA", (self.size, self.size), self.background_color)
         base.paste(bg, (0, 0), mask)
         
         return base
@@ -86,17 +99,8 @@ class IconStyleEngine:
         shadow = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 255))
         base.paste(shadow, (0, shadow_offset), shadow_mask)
 
-        # Gradient Background
-        # Vertical gradient from light gray (top) to white (bottom)
-        gradient = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
-        g_draw = ImageDraw.Draw(gradient)
-        for i in range(padding, padding + icon_size):
-            # i goes from padding to padding + icon_size
-            # progress goes from 0.0 to 1.0
-            progress = (i - padding) / icon_size
-            # Gray value goes from 240 (light gray) to 255 (white)
-            gray = int(240 + progress * 15)
-            g_draw.line([(padding, i), (padding + icon_size, i)], fill=(gray, gray, gray, 255))
+        # Gradient Background dynamically tinted
+        gradient = self._create_gradient_background(rect, 0.94)
         
         # Mask for the squircle
         mask = Image.new("L", (self.size, self.size), 0)
@@ -129,17 +133,12 @@ class IconStyleEngine:
         shadow = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 255))
         base.paste(shadow, (0, int(self.size * 0.01)), shadow_mask)
 
-        # Gradient (subtle top-to-bottom for circular icons)
+        # Gradient (subtle top-to-bottom for circular icons) dynamically tinted
         mask = Image.new("L", (self.size, self.size), 0)
         m_draw = ImageDraw.Draw(mask)
         m_draw.ellipse(rect, fill=255)
         
-        gradient = Image.new("RGBA", (self.size, self.size), (250, 250, 250, 255))
-        g_draw = ImageDraw.Draw(gradient)
-        for i in range(padding, padding + icon_size):
-            progress = (i - padding) / icon_size
-            gray = int(250 + progress * 5)
-            g_draw.line([(padding, i), (padding + icon_size, i)], fill=(gray, gray, gray, 255))
+        gradient = self._create_gradient_background(rect, 0.98)
 
         base.paste(gradient, (0, 0), mask)
         
@@ -175,7 +174,7 @@ class IconStyleEngine:
         m_draw = ImageDraw.Draw(mask)
         m_draw.rounded_rectangle(rect, radius=corner_radius, fill=255)
         
-        bg = Image.new("RGBA", (self.size, self.size), (255, 255, 255, 255))
+        bg = Image.new("RGBA", (self.size, self.size), self.background_color)
         base.paste(bg, (0, 0), mask)
         
         draw = ImageDraw.Draw(base)
@@ -188,10 +187,17 @@ class IconStyleEngine:
         if style_name not in self._style_registry:
             return None, 1.0
             
-        cache_key = (style_name, self.size)
+        bg_color = self.background_color
+        if len(bg_color) >= 4 and bg_color[3] == 0:
+            bg_color = (255, 255, 255, 255)
+            
+        cache_key = (style_name, self.size, bg_color)
         if cache_key not in self._cache:
+            original_bg = self.background_color
+            self.background_color = bg_color
             create_func, content_scale = self._style_registry[style_name]
             self._cache[cache_key] = create_func()
+            self.background_color = original_bg
             
         return self._cache[cache_key].copy(), self._style_registry[style_name][1]
 
@@ -218,6 +224,11 @@ class IconStyleEngine:
         # Convert OpenCV (BGRA) to PIL (RGBA)
         logo_rgba = cv2.cvtColor(logo_cv, cv2.COLOR_BGRA2RGBA)
         logo_pil = Image.fromarray(logo_rgba)
+        
+        # Crop to content to ensure centering is based on the subject, not image bounds
+        bbox = logo_pil.getbbox()
+        if bbox:
+            logo_pil = logo_pil.crop(bbox)
         
         # Resize logo to fit inside background
         bg_w, bg_h = background.size

@@ -182,6 +182,45 @@ class ImageProcessor:
         if self.watermark_mask is not None:
             self.watermark_mask.fill(0)
 
+    def apply_sketch_filter(self, kernel_size: int = 21) -> None:
+        """Converts the active current_image (subject) into a pencil sketch style.
+        The background mask is preserved.
+        """
+        if self.current_image is None:
+            return
+
+        # Ensure base image is BGR
+        if len(self.current_image.shape) == 2:  # Grayscale
+            bgr = cv2.cvtColor(self.current_image, cv2.COLOR_GRAY2BGR)
+        elif self.current_image.shape[2] == 4:
+            bgr = self.current_image[:, :, :3]
+        else:
+            bgr = self.current_image
+
+        # 1. Convert to grayscale
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+
+        # 2. Invert the grayscale image
+        gray_inv = 255 - gray
+
+        # 3. Apply Gaussian Blur to the inverted image
+        # Kernel size must be odd and positive (e.g. 9, 21, 51)
+        blur = cv2.GaussianBlur(gray_inv, (kernel_size, kernel_size), 0)
+
+        # 4. Blend using color dodge
+        sketch = cv2.divide(gray, 255 - blur, scale=256)
+
+        # Convert back to 3-channel BGR
+        sketch_bgr = cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
+
+        # If current_image was 4-channel RGBA/BGRA, preserve the alpha channel in current_image
+        if len(self.current_image.shape) == 2:
+            self.current_image = sketch
+        elif self.current_image.shape[2] == 4:
+            self.current_image[:, :, :3] = sketch_bgr
+        else:
+            self.current_image = sketch_bgr
+
     def apply_current_style(self) -> None:
         """Applies the current mode's style (e.g., folder background) to the image."""
         if self.current_image is None or self.mode != "folder":
