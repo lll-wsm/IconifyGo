@@ -460,7 +460,8 @@ class BottomBar(QWidget):
         options = [
             ("Fine Detail (精细)", 9),
             ("Classic Sketch (经典)", 21),
-            ("Bold Sketch (浓重)", 51)
+            ("Bold Sketch (浓重)", 51),
+            ("Restore Original (恢复原图)", 0)
         ]
         
         for name, kernel_size in options:

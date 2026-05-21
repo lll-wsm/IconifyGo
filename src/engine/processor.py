@@ -9,6 +9,7 @@ class ImageProcessor:
     def __init__(self):
         self.current_image: Optional[np.ndarray] = None
         self.original_image: Optional[np.ndarray] = None
+        self.pre_sketch_image: Optional[np.ndarray] = None
         self.mask: Optional[np.ndarray] = None
         self.watermark_mask: Optional[np.ndarray] = None
         self.original_path: Optional[str] = None
@@ -52,6 +53,7 @@ class ImageProcessor:
             image = cv2.convertScaleAbs(image)
 
         self.current_image = image
+        self.pre_sketch_image = None
         if len(image.shape) > 2 and image.shape[2] == 4:
             self.mask = image[:, :, 3].copy()
         else:
@@ -179,6 +181,7 @@ class ImageProcessor:
             result_image: The inpainted image returned by InpaintWorker.
         """
         self.current_image = result_image
+        self.pre_sketch_image = None
         if self.watermark_mask is not None:
             self.watermark_mask.fill(0)
 
@@ -189,13 +192,20 @@ class ImageProcessor:
         if self.current_image is None:
             return
 
+        # Backup the pre-sketch image if not already backed up
+        if self.pre_sketch_image is None:
+            self.pre_sketch_image = self.current_image.copy()
+
+        # Always work on the pre-sketch image to avoid cumulative filter degradation
+        base_img = self.pre_sketch_image
+
         # Ensure base image is BGR
-        if len(self.current_image.shape) == 2:  # Grayscale
-            bgr = cv2.cvtColor(self.current_image, cv2.COLOR_GRAY2BGR)
-        elif self.current_image.shape[2] == 4:
-            bgr = self.current_image[:, :, :3]
+        if len(base_img.shape) == 2:  # Grayscale
+            bgr = cv2.cvtColor(base_img, cv2.COLOR_GRAY2BGR)
+        elif base_img.shape[2] == 4:
+            bgr = base_img[:, :, :3]
         else:
-            bgr = self.current_image
+            bgr = base_img
 
         # 1. Convert to grayscale
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -213,13 +223,22 @@ class ImageProcessor:
         # Convert back to 3-channel BGR
         sketch_bgr = cv2.cvtColor(sketch, cv2.COLOR_GRAY2BGR)
 
-        # If current_image was 4-channel RGBA/BGRA, preserve the alpha channel in current_image
+        # If current_image was 4-channel RGBA/BGRA, preserve the alpha channel
         if len(self.current_image.shape) == 2:
-            self.current_image = sketch
+            self.current_image = sketch.copy()
         elif self.current_image.shape[2] == 4:
+            self.current_image = self.pre_sketch_image.copy()
             self.current_image[:, :, :3] = sketch_bgr
         else:
-            self.current_image = sketch_bgr
+            self.current_image = sketch_bgr.copy()
+
+    def restore_pre_sketch(self) -> bool:
+        """Restores the image to the state before the sketch filter was applied."""
+        if self.pre_sketch_image is not None:
+            self.current_image = self.pre_sketch_image.copy()
+            self.pre_sketch_image = None
+            return True
+        return False
 
     def apply_current_style(self) -> None:
         """Applies the current mode's style (e.g., folder background) to the image."""
@@ -444,6 +463,7 @@ class ImageProcessor:
 
         # Convert back to NumPy BGRA/BGR
         new_img = np.array(final_img)
+        self.pre_sketch_image = None
         if new_img.shape[2] == 4:
             self.current_image = cv2.cvtColor(new_img, cv2.COLOR_RGBA2BGRA)
             self.mask = self.current_image[:, :, 3].copy()

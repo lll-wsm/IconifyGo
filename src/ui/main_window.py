@@ -1,5 +1,5 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QMessageBox, QPushButton
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QMessageBox, QPushButton, QDialog, QLabel
+from PySide6.QtCore import QTimer, Qt, QPoint
 from src.ui.bottom_bar import BottomBar
 from src.ui.preview_gallery import PreviewGallery
 from src.ui.canvas import IconifyCanvas
@@ -11,6 +11,120 @@ from src.engine.icon_styles import IconStyleEngine
 from src.engine.folder_styles import FolderStyleEngine
 from src.engine.document_styles import DocumentStyleEngine
 from src.utils.export import export_icns, export_png_set
+
+class ModernMessageBox(QDialog):
+    def __init__(self, parent=None, title="Notification", text="", is_error=False, is_warning=False):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        
+        self.drag_pos = QPoint()
+        
+        # Main layout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(1, 1, 1, 1) # Space for border
+        
+        # Central styled widget
+        self.container = QWidget()
+        self.container.setObjectName("Container")
+        
+        # Color schemes based on warning/error/info
+        if is_error:
+            border_color = "rgba(255, 69, 58, 0.5)" # Reddish border
+            title_color = "#ff453a"
+        elif is_warning:
+            border_color = "rgba(255, 159, 10, 0.5)" # Orangey border
+            title_color = "#ff9f0a"
+        else:
+            border_color = "rgba(191, 90, 242, 0.4)" # Purple border
+            title_color = "#bf5af2"
+            
+        self.container.setStyleSheet(f"""
+            #Container {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                    stop:0 rgba(80, 30, 140, 235), 
+                    stop:0.5 rgba(40, 15, 80, 245), 
+                    stop:1 rgba(20, 5, 40, 250));
+                border: 1px solid {border_color};
+                border-radius: 16px;
+            }}
+            QLabel {{
+                color: #ffffff;
+                background: transparent;
+            }}
+        """)
+        
+        container_layout = QVBoxLayout(self.container)
+        container_layout.setContentsMargins(24, 20, 24, 18)
+        container_layout.setSpacing(14)
+        
+        # Title
+        self.title_label = QLabel(title)
+        self.title_label.setStyleSheet(f"font-weight: bold; font-size: 15px; color: {title_color};")
+        container_layout.addWidget(self.title_label)
+        
+        # Text/Message
+        self.message_label = QLabel(text)
+        self.message_label.setWordWrap(True)
+        self.message_label.setStyleSheet("font-size: 13px; color: #e5e5e7; line-height: 18px;")
+        container_layout.addWidget(self.message_label)
+        
+        # Buttons layout
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch()
+        
+        # OK Button
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.setStyleSheet("""
+            QPushButton {
+                background: #bf5af2;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 20px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background: #d07cff;
+            }
+            QPushButton:pressed {
+                background: #a745db;
+            }
+        """)
+        self.ok_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.ok_btn)
+        
+        container_layout.addLayout(btn_layout)
+        layout.addWidget(self.container)
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_pos)
+            event.accept()
+
+    @staticmethod
+    def show_info(parent, title, text):
+        box = ModernMessageBox(parent, title, text, is_error=False, is_warning=False)
+        box.exec()
+        
+    @staticmethod
+    def show_warning(parent, title, text):
+        box = ModernMessageBox(parent, title, text, is_error=False, is_warning=True)
+        box.exec()
+        
+    @staticmethod
+    def show_error(parent, title, text):
+        box = ModernMessageBox(parent, title, text, is_error=True, is_warning=False)
+        box.exec()
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -188,7 +302,7 @@ class MainWindow(QMainWindow):
             self.bottom_bar.show_message("Reset to original image", 3000)
             self.refresh_all()
         else:
-            QMessageBox.warning(self, "Warning", "No original image to restore.")
+            ModernMessageBox.show_warning(self, "Warning", "No original image to restore.")
 
     def erase_watermark(self, strength: str) -> None:
         """Trigger async inpainting on the current image using the watermark mask."""
@@ -220,7 +334,7 @@ class MainWindow(QMainWindow):
 
     def on_inpaint_error(self, error_msg) -> None:
         """Handle inpaint failure."""
-        QMessageBox.critical(self, "Error", f"Watermark removal failed: {error_msg}")
+        ModernMessageBox.show_error(self, "Error", f"Watermark removal failed: {error_msg}")
         self.bottom_bar.erase_btn.setEnabled(True)
         self.bottom_bar.set_progress_active(False)
 
@@ -369,13 +483,13 @@ class MainWindow(QMainWindow):
             self.gallery.show() # Reveal gallery
             self.refresh_all()
         else:
-            QMessageBox.critical(self, "Error", f"Could not load image: {file_path}")
+            ModernMessageBox.show_error(self, "Error", f"Could not load image: {file_path}")
 
     def remove_background(self, model_name: str) -> None:
         self.selected_model = model_name
         self.canvas.set_mode('bg')
         if self.image_processor.current_image is None:
-            QMessageBox.warning(self, "Warning", "Please load an image first.")
+            ModernMessageBox.show_warning(self, "Warning", "Please load an image first.")
             return
 
         self.bottom_bar.remove_bg_btn.setEnabled(False)
@@ -395,14 +509,22 @@ class MainWindow(QMainWindow):
         self.bottom_bar.set_progress_active(False)
 
     def on_bg_error(self, error_msg) -> None:
-        QMessageBox.critical(self, "Error", f"Background removal failed: {error_msg}")
+        ModernMessageBox.show_error(self, "Error", f"Background removal failed: {error_msg}")
         self.bottom_bar.remove_bg_btn.setEnabled(True)
         self.bottom_bar.set_progress_active(False)
 
     def apply_sketch(self, kernel_size: int) -> None:
         """Applies pencil sketch filter with specified kernel size to the current image."""
         if self.image_processor.current_image is None:
-            QMessageBox.warning(self, "Warning", "Please load an image first.")
+            ModernMessageBox.show_warning(self, "Warning", "Please load an image first.")
+            return
+
+        if kernel_size == 0:
+            if self.image_processor.restore_pre_sketch():
+                self.bottom_bar.show_message("Restored original image", 3000)
+                self.refresh_all()
+            else:
+                self.bottom_bar.show_message("Already at original image", 3000)
             return
 
         self.image_processor.apply_sketch_filter(kernel_size)
@@ -411,7 +533,7 @@ class MainWindow(QMainWindow):
 
     def export_result(self, format_name: str) -> None:
         if self.image_processor.current_image is None:
-            QMessageBox.warning(self, "Warning", "Please load and process an image first.")
+            ModernMessageBox.show_warning(self, "Warning", "Please load and process an image first.")
             return
 
         rgba = self.image_processor.get_rgba_image()
@@ -466,9 +588,9 @@ class MainWindow(QMainWindow):
             file_path, _ = QFileDialog.getSaveFileName(self, "Save ICNS Icon", "", "macOS Icon (*.icns)")
             if file_path:
                 if export_icns(styled_pil, file_path):
-                    QMessageBox.information(self, "Success", "Exported successfully")
+                    ModernMessageBox.show_info(self, "Success", "Exported successfully")
         else:
             dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
             if dir_path:
                 if export_png_set(styled_pil, dir_path):
-                    QMessageBox.information(self, "Success", "Exported PNG set")
+                    ModernMessageBox.show_info(self, "Success", "Exported PNG set")
