@@ -211,6 +211,9 @@ class IconifyCanvas(QGraphicsView):
         if self.bg_color_item:
             self.bg_color_item.hide()
 
+        # Scale view down to fit the new preview item
+        self.fit_in_view()
+
     def clear_preview(self) -> None:
         """Remove the styled preview overlay and restore the original image."""
         if self.preview_item:
@@ -227,17 +230,22 @@ class IconifyCanvas(QGraphicsView):
                 self.bg_color_item.setRect(rect)
                 self.bg_color_item.show()
 
+        # Restore scale to fit main image dimensions
+        self.fit_in_view()
+
     def fit_in_view(self) -> None:
-        if self.image_item:
+        # Scale view dynamically to fit the currently active item (preview or original image)
+        active_item = self.preview_item if self.preview_item else self.image_item
+        if active_item:
             self.resetTransform()
             view_rect = self.viewport().rect()
-            item_rect = self.image_item.pixmap().rect()
+            item_rect = active_item.pixmap().rect()
             scale = min(view_rect.width() / (item_rect.width() + 40), 
                         view_rect.height() / (item_rect.height() + 40))
             self.fit_scale = min(1.0, scale)
             if self.fit_scale < 1.0:
                 self.scale(self.fit_scale, self.fit_scale)
-            self.centerOn(self.image_item)
+            self.centerOn(active_item)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         if not self.image_item:

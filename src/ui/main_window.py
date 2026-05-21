@@ -270,6 +270,8 @@ class MainWindow(QMainWindow):
             # Re-generate active styled preview if any
             if selected_style != "original":
                 self.on_preview_style_selected(selected_style)
+            # Re-generate the gallery previews in the sidebar to reflect the new background color
+            self._run_async_preview()
 
     def on_preview_style_selected(self, style_id: str) -> None:
         """Generate styled image and display it in the canvas when a preview is clicked."""
@@ -337,9 +339,15 @@ class MainWindow(QMainWindow):
             self.preview_worker.requestInterruption()
             self.preview_worker.wait()
 
-        # Always pass transparent background color to the preview generator
-        # so the gallery previews in the sidebar always show their default style/color.
-        self.preview_worker = PreviewWorker(rgba, (0, 0, 0, 0))
+        # Build style-specific background colors map for the preview generator
+        from PySide6.QtGui import QColor
+        bg_colors_dict = {}
+        for s_id in ["original", "big_sur", "catalina", "classic", "ios", "android",
+                     "folder_center", "folder_cover", "document_center", "document_cover"]:
+            qcolor = self.style_bg_colors.get(s_id, QColor(0, 0, 0, 0))
+            bg_colors_dict[s_id] = (qcolor.red(), qcolor.green(), qcolor.blue(), qcolor.alpha())
+
+        self.preview_worker = PreviewWorker(rgba, bg_colors_dict)
         self.preview_worker.style_ready.connect(self.gallery.update_style_preview)
         self.preview_worker.start()
 

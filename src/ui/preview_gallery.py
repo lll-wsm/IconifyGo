@@ -117,6 +117,7 @@ class PreviewGallery(QScrollArea):
         for s_id, item in self.previews.items():
             item.set_selected(s_id == style_id)
 
-    def update_style_preview(self, style_id: str, pixmap: QPixmap):
+    def update_style_preview(self, style_id: str, image: QImage):
         if style_id in self.previews:
+            pixmap = QPixmap.fromImage(image)
             self.previews[style_id].set_pixmap(pixmap)
