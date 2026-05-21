@@ -2,7 +2,7 @@
 
 IconifyGo 是一款专为开发者和设计师打造的 macOS 风格图标与文件夹处理工具。它可以一键去除背景、清除水印，并快速生成符合 macOS 系统规范的应用图标和自定义样式的文件夹。
 
-![IconifyGo Mockup](https://via.placeholder.com/800x450.png?text=IconifyGo+Desktop+App)
+![IconifyGo Mockup](IconifyGo.png)
 
 ## 核心功能
 
