@@ -274,7 +274,8 @@ class MainWindow(QMainWindow):
         
         # Connect signals
         self.bottom_bar.remove_bg_clicked.connect(self.remove_background)
-        self.bottom_bar.tool_changed.connect(self.canvas.set_tool)
+        self.bottom_bar.tool_changed.connect(self.set_active_tool)
+        self.bottom_bar.wm_tool_changed.connect(self.set_wm_tool)
         self.bottom_bar.brush_size_changed.connect(self.canvas.set_brush_size)
         self.bottom_bar.brush_shape_changed.connect(self.canvas.set_brush_shape)
         self.bottom_bar.export_clicked.connect(self.export_result)
@@ -331,12 +332,30 @@ class MainWindow(QMainWindow):
         self.bottom_bar.erase_btn.setEnabled(True)
         self.bottom_bar.show_message("Watermark removed successfully", 3000)
         self.bottom_bar.set_progress_active(False)
+        # Reset tool to pointer and mode to bg on successful completion
+        self.set_active_tool("pointer")
+        pointer_btn = self.bottom_bar.tool_group.button(0)
+        if pointer_btn:
+            pointer_btn.setChecked(True)
 
     def on_inpaint_error(self, error_msg) -> None:
         """Handle inpaint failure."""
         ModernMessageBox.show_error(self, "Error", f"Watermark removal failed: {error_msg}")
         self.bottom_bar.erase_btn.setEnabled(True)
         self.bottom_bar.set_progress_active(False)
+
+    def set_active_tool(self, tool_name: str) -> None:
+        """Set the active canvas tool for background removal mode."""
+        self.canvas.set_mode('bg')
+        self.canvas.set_tool(tool_name)
+        self.bottom_bar.erase_btn.setChecked(False)
+
+    def set_wm_tool(self, tool_name: str) -> None:
+        """Set the active canvas tool for watermark removal mode."""
+        self.canvas.set_mode('wm')
+        self.canvas.set_tool(tool_name)
+        self.bottom_bar.erase_btn.setChecked(True)
+        self.bottom_bar.clear_regular_tools()
 
     def handle_mask_update(self, update_info: tuple) -> None:
         if self.image_processor.current_image is None:

@@ -14,7 +14,7 @@ class PreviewWorker(QThread):
     def __init__(self, rgba_image: np.ndarray, bg_colors: dict):
         super().__init__()
         self.rgba = rgba_image.copy()
-        self.preview_size = 256
+        self.preview_size = 512
         self.bg_colors = bg_colors
         self.icon_engine = IconStyleEngine(size=self.preview_size)
         self.folder_engine = FolderStyleEngine(size=self.preview_size)

@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QSlider, QLabel, 
-    QComboBox, QFrame, QButtonGroup, QMenu, QPlainTextEdit, QColorDialog, QProgressBar
+    QComboBox, QFrame, QButtonGroup, QPlainTextEdit, QColorDialog, QProgressBar
 )
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtGui import QPainter, QColor, QAction, QFontDatabase, QFont
+from PySide6.QtGui import QPainter, QColor, QFontDatabase, QFont
 from PySide6.QtCore import Qt, Signal, QByteArray, QPoint
 from typing import Optional
 from .icons import SVG_TEMPLATE, ICONS
@@ -186,6 +186,7 @@ class BottomBar(QWidget):
     text_added = Signal(str, dict)
     bg_color_changed = Signal(object)  # QColor
     sketch_clicked = Signal(int)
+    wm_tool_changed = Signal(str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -297,7 +298,7 @@ class BottomBar(QWidget):
         self.layout.addWidget(self.remove_bg_btn)
 
         self.erase_btn = SvgIconButton("broom", "Erase Watermark")
-        self.erase_btn.setCheckable(False)
+        self.erase_btn.setCheckable(True)
         self.erase_btn.clicked.connect(self.show_inpaint_menu)
         self.layout.addWidget(self.erase_btn)
 
@@ -338,54 +339,132 @@ class BottomBar(QWidget):
     def set_progress_active(self, active: bool):
         self.progress_bar.setVisible(active)
 
-    def _create_styled_menu(self):
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background-color: #2a2a2a; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 5px; }
-            QMenu::item { padding: 5px 20px; border-radius: 4px; }
-            QMenu::item:selected { background-color: #007aff; }
-        """)
-        return menu
-
     def show_model_menu(self):
-        menu = self._create_styled_menu()
+        from .popover import ActionPopover
+        popover = ActionPopover(self)
+        
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(8)
+        
+        title = QLabel("选择抠图模型")
+        title.setStyleSheet("font-weight: bold; font-size: 12px; color: #fff;")
+        layout.addWidget(title)
+        
         models = ["isnet-general-use", "u2net", "birefnet-general"]
         for m in models:
-            action = QAction(m, self)
-            action.triggered.connect(lambda checked, name=m: self.remove_bg_clicked.emit(name))
-            menu.addAction(action)
-        
-        pos = self.remove_bg_btn.mapToGlobal(self.remove_bg_btn.rect().topLeft())
-        menu.exec(pos - QPoint(0, menu.sizeHint().height()))
+            btn = QPushButton(m)
+            btn.clicked.connect(lambda checked, name=m: [self.remove_bg_clicked.emit(name), popover.close()])
+            layout.addWidget(btn)
+            
+        popover.set_widget(content)
+        popover.show_above(self.remove_bg_btn)
+
+    def clear_regular_tools(self) -> None:
+        """Uncheck all background/pointer tools without emitting signals."""
+        self.tool_group.setExclusive(False)
+        for btn in self.tool_group.buttons():
+            btn.setChecked(False)
+        self.tool_group.setExclusive(True)
 
     def show_inpaint_menu(self):
-        menu = self._create_styled_menu()
-        strengths = ["Light", "Medium", "Strong"]
-        for s in strengths:
-            action = QAction(s, self)
-            action.triggered.connect(lambda checked, name=s.lower(): self.erase_watermark_clicked.emit(name))
-            menu.addAction(action)
+        from .popover import ActionPopover
+        popover = ActionPopover(self)
         
-        pos = self.erase_btn.mapToGlobal(self.erase_btn.rect().topLeft())
-        menu.exec(pos - QPoint(0, menu.sizeHint().height()))
+        # Sync the erase_btn checked state when popover is closed
+        original_close_event = popover.closeEvent
+        def on_popover_close(event):
+            main_win = self.window()
+            if hasattr(main_win, "canvas"):
+                self.erase_btn.setChecked(main_win.canvas.current_mode == "wm")
+            original_close_event(event)
+        popover.closeEvent = on_popover_close
+        
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(10)
+        
+        title = QLabel("水印绘制与去除")
+        title.setStyleSheet("font-weight: bold; font-size: 12px; color: #fff;")
+        layout.addWidget(title)
+        
+        # Tool buttons row
+        tool_row = QHBoxLayout()
+        tool_row.setSpacing(8)
+        
+        wm_brush = SvgIconButton("wm_brush", "Watermark Brush (绘制遮罩)", content)
+        wm_brush.setCheckable(True)
+        
+        wm_eraser = SvgIconButton("wm_eraser", "Watermark Eraser (擦除遮罩)", content)
+        wm_eraser.setCheckable(True)
+        
+        main_win = self.window()
+        if hasattr(main_win, "canvas"):
+            wm_brush.setChecked(main_win.canvas.current_mode == "wm" and main_win.canvas.current_tool == "brush")
+            wm_eraser.setChecked(main_win.canvas.current_mode == "wm" and main_win.canvas.current_tool == "eraser")
+        
+        wm_group = QButtonGroup(content)
+        wm_group.addButton(wm_brush)
+        wm_group.addButton(wm_eraser)
+        
+        wm_brush.clicked.connect(lambda: [self.wm_tool_changed.emit("brush"), popover.close()])
+        wm_eraser.clicked.connect(lambda: [self.wm_tool_changed.emit("eraser"), popover.close()])
+        
+        tool_row.addWidget(wm_brush)
+        tool_row.addWidget(wm_eraser)
+        tool_row.addStretch()
+        
+        layout.addLayout(tool_row)
+        
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: rgba(255, 255, 255, 15); border: none; min-height: 1px; max-height: 1px;")
+        layout.addWidget(line)
+        
+        strength_title = QLabel("选择去除强度")
+        strength_title.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 150);")
+        layout.addWidget(strength_title)
+        
+        strength_row = QHBoxLayout()
+        strength_row.setSpacing(6)
+        
+        strengths = [("Light", "light"), ("Medium", "medium"), ("Strong", "strong")]
+        for label, val in strengths:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda checked, v=val: [self.erase_watermark_clicked.emit(v), popover.close()])
+            strength_row.addWidget(btn)
+            
+        layout.addLayout(strength_row)
+        
+        popover.set_widget(content)
+        popover.show_above(self.erase_btn)
 
     def show_export_menu(self):
-        menu = self._create_styled_menu()
+        from .popover import ActionPopover
+        popover = ActionPopover(self)
         
-        icns_action = QAction("macOS Icon (.icns)", self)
-        icns_action.triggered.connect(lambda: self.export_clicked.emit(".icns"))
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(8)
         
-        png_action = QAction("PNG Image Set", self)
-        png_action.triggered.connect(lambda: self.export_clicked.emit("PNG"))
+        title = QLabel("导出格式")
+        title.setStyleSheet("font-weight: bold; font-size: 12px; color: #fff;")
+        layout.addWidget(title)
         
-        menu.addAction(icns_action)
-        menu.addAction(png_action)
-        
-        # Show menu above the button
-        # Force a layout update to ensure sizeHint is accurate
-        menu.adjustSize()
-        pos = self.export_btn.mapToGlobal(self.export_btn.rect().topLeft())
-        menu.exec(pos - QPoint(0, menu.sizeHint().height()))
+        exports = [
+            ("macOS Icon (.icns)", ".icns"),
+            ("PNG Image Set", "PNG")
+        ]
+        for label, val in exports:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda checked, v=val: [self.export_clicked.emit(v), popover.close()])
+            layout.addWidget(btn)
+            
+        popover.set_widget(content)
+        popover.show_above(self.export_btn)
 
     def show_shape_menu(self):
         from .popover import ActionPopover
@@ -395,7 +474,6 @@ class BottomBar(QWidget):
         layout.setSpacing(5)
         for s in ["Circle", "Square", "Ellipse"]:
             btn = QPushButton(s)
-            btn.setStyleSheet("padding: 5px 10px; background: #333; color: #eee; border: 1px solid #444; border-radius: 4px;")
             btn.clicked.connect(lambda checked, shape=s: [self.brush_shape_changed.emit(shape), popover.close()])
             layout.addWidget(btn)
         popover.set_widget(content)
@@ -439,23 +517,17 @@ class BottomBar(QWidget):
             self.bg_color_changed.emit(color)
 
     def show_sketch_menu(self):
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background: #1e1e1e;
-                border: 1px solid #333;
-                border-radius: 6px;
-                padding: 4px;
-            }
-            QMenu::item {
-                color: #eee;
-                padding: 6px 20px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background: #bf5af2;
-            }
-        """)
+        from .popover import ActionPopover
+        popover = ActionPopover(self)
+        
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(8)
+        
+        title = QLabel("素描风格转换")
+        title.setStyleSheet("font-weight: bold; font-size: 12px; color: #fff;")
+        layout.addWidget(title)
         
         options = [
             ("Fine Detail (精细)", 9),
@@ -465,9 +537,9 @@ class BottomBar(QWidget):
         ]
         
         for name, kernel_size in options:
-            action = QAction(name, self)
-            action.triggered.connect(lambda checked=False, k_size=kernel_size: self.sketch_clicked.emit(k_size))
-            menu.addAction(action)
+            btn = QPushButton(name)
+            btn.clicked.connect(lambda checked, k_size=kernel_size: [self.sketch_clicked.emit(k_size), popover.close()])
+            layout.addWidget(btn)
             
-        pos = self.sketch_btn.mapToGlobal(QPoint(0, -menu.sizeHint().height()))
-        menu.exec(pos)
+        popover.set_widget(content)
+        popover.show_above(self.sketch_btn)

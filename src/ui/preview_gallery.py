@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QLabel, QFrame
 )
 from PySide6.QtGui import QPixmap, QImage
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from typing import Optional, List
 
 class PreviewItem(QFrame):
@@ -31,7 +31,13 @@ class PreviewItem(QFrame):
         self.layout.addWidget(self.text_label)
 
     def set_pixmap(self, pixmap: QPixmap):
-        self.preview_label.setPixmap(pixmap.scaled(130, 130, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        dpr = self.devicePixelRatio()
+        if dpr <= 0:
+            dpr = 1.0
+        target_size = QSize(int(130 * dpr), int(130 * dpr))
+        scaled_pixmap = pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled_pixmap.setDevicePixelRatio(dpr)
+        self.preview_label.setPixmap(scaled_pixmap)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
