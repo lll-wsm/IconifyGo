@@ -260,17 +260,24 @@ class IconifyCanvas(QGraphicsView):
         
         # Calculate dynamic minimum scale limit: e.g., 0.5 of self.fit_scale
         min_scale = getattr(self, 'fit_scale', 1.0) * 0.5
-        max_scale = 50.0  # Allow zoom in up to 50x
+        
+        # Calculate dynamic max scale to avoid rendering lag.
+        # We limit the virtual dimension of the image to 8000 pixels.
+        # For standard 1024x1024 icons, this allows zoom up to ~7.8x.
+        # We also ensure the user can always zoom in to at least 2.0x of fit_scale,
+        # but cap the absolute zoom factor at 15.0 to keep CPU/GPU rendering smooth.
+        pixmap = self.image_item.pixmap()
+        max_dim = max(pixmap.width(), pixmap.height())
+        max_scale = min(15.0, 8000.0 / max_dim)
+        max_scale = max(max_scale, getattr(self, 'fit_scale', 1.0) * 2.0)
         
         if not zoom_in and current_scale <= min_scale:
             return
         if zoom_in and current_scale >= max_scale:
             return
 
-        # Dampen zoom speed: 1.05 per standard notch (120 units)
+        # Dampen zoom speed: ~1.05 per standard notch (120 units)
         angle = event.angleDelta().y()
-        zoom_factor = 1.0 + (abs(angle) / 1200.0) # ~1.1 at standard notch
-        # Let's slow it down to ~1.05
         zoom_factor = 1.0 + (abs(angle) / 2400.0) 
         
         if angle < 0:
@@ -283,7 +290,7 @@ class IconifyCanvas(QGraphicsView):
             zoom_factor = min_scale / current_scale
         elif new_scale > max_scale:
             zoom_factor = max_scale / current_scale
-
+ 
         self.scale(zoom_factor, zoom_factor)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
