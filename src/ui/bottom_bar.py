@@ -151,13 +151,13 @@ class SvgIconButton(QPushButton):
         
         # Draw subtle background if checked or hovered
         if self.isChecked() or self.underMouse():
-            bg_color = QColor(255, 255, 255, 30) if not self.isChecked() else QColor(0, 122, 255, 40)
+            bg_color = QColor(255, 255, 255, 30) if not self.isChecked() else QColor(191, 90, 242, 60)
             painter.setBrush(bg_color)
             painter.setPen(Qt.NoPen)
             painter.drawRoundedRect(self.rect(), 6, 6)
             
         # Prepare SVG
-        color = "#007aff" if self.isChecked() else "#eeeeee"
+        color = "#bf5af2" if self.isChecked() else "#eeeeee"
         svg_data = SVG_TEMPLATE.format(path=ICONS[self.icon_name], color=color)
         
         renderer = QSvgRenderer(QByteArray(svg_data.encode()))
@@ -190,10 +190,37 @@ class BottomBar(QWidget):
         self.init_ui()
 
     def init_ui(self) -> None:
-        self.setFixedHeight(65)
-        self.layout = QHBoxLayout(self)
+        self.setFixedHeight(75) # Slightly taller to accommodate status label
+        self.main_container = QVBoxLayout(self)
+        self.main_container.setContentsMargins(0, 0, 0, 0)
+        self.main_container.setSpacing(0)
+
+        # 1. Top Bar (Tools)
+        self.bar_widget = QWidget()
+        self.bar_widget.setFixedHeight(55)
+        self.bar_widget.setStyleSheet("""
+            QWidget { 
+                background: rgba(0, 0, 0, 40); 
+                border-top: 1px solid rgba(255, 255, 255, 10);
+            }
+        """)
+        self.layout = QHBoxLayout(self.bar_widget)
         self.layout.setContentsMargins(15, 0, 15, 0)
         self.layout.setSpacing(15)
+        self.main_container.addWidget(self.bar_widget)
+
+        # 2. Bottom Status Label
+        self.status_label = QLabel("")
+        self.status_label.setFixedHeight(20)
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("""
+            background: rgba(0, 0, 0, 60);
+            color: rgba(255, 255, 255, 120);
+            font-size: 10px;
+            border-bottom-left-radius: 20px;
+            border-bottom-right-radius: 20px;
+        """)
+        self.main_container.addWidget(self.status_label)
 
         # 1. Mask Tools Group (Iconified)
         self.tool_group = QButtonGroup(self)
@@ -219,7 +246,8 @@ class BottomBar(QWidget):
         # Separator
         line1 = QFrame()
         line1.setFrameShape(QFrame.VLine)
-        line1.setFrameShadow(QFrame.Sunken)
+        line1.setFixedWidth(1)
+        line1.setStyleSheet("background-color: rgba(255, 255, 255, 15); border: none;")
         self.layout.addWidget(line1)
 
         # 2. Brush Settings
@@ -266,6 +294,12 @@ class BottomBar(QWidget):
         self.export_btn.setCheckable(False)
         self.export_btn.clicked.connect(self.show_export_menu)
         self.layout.addWidget(self.export_btn)
+
+    def show_message(self, message: str, timeout: int = 3000):
+        self.status_label.setText(message)
+        if timeout > 0:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(timeout, lambda: self.status_label.setText("") if self.status_label.text() == message else None)
 
     def _create_styled_menu(self):
         menu = QMenu(self)

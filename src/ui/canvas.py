@@ -80,11 +80,18 @@ class IconifyCanvas(QGraphicsView):
     def setup_background(self) -> None:
         size = 20
         pixmap = QPixmap(size * 2, size * 2)
-        pixmap.fill(QColor(255, 255, 255))
+        pixmap.fill(Qt.transparent)
         painter = QPainter(pixmap)
-        bg_color = QColor(230, 230, 230)
-        painter.fillRect(0, 0, size, size, bg_color)
-        painter.fillRect(size, size, size, size, bg_color)
+        
+        # Tile 1: Very subtle white/glass
+        color1 = QColor(255, 255, 255, 10)
+        # Tile 2: Subtle purple tint
+        color2 = QColor(191, 90, 242, 15)
+        
+        painter.fillRect(0, 0, size, size, color1)
+        painter.fillRect(size, size, size, size, color1)
+        painter.fillRect(size, 0, size, size, color2)
+        painter.fillRect(0, size, size, size, color2)
         painter.end()
         self.setBackgroundBrush(QBrush(pixmap))
 
@@ -141,6 +148,15 @@ class IconifyCanvas(QGraphicsView):
         self.placeholder_proxy.hide()
         self.image_item = self.scene.addPixmap(pixmap)
         self.image_item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
+        
+        # Add a subtle "glass" shadow/glow to the image
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(30)
+        shadow.setColor(QColor(255, 255, 255, 30))
+        shadow.setOffset(0, 0)
+        self.image_item.setGraphicsEffect(shadow)
+        
         self.resetTransform()
         self.fit_in_view()
         return self.image_item

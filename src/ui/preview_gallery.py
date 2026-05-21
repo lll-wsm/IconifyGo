@@ -40,9 +40,9 @@ class PreviewItem(QFrame):
     def set_selected(self, selected: bool):
         self.selected = selected
         if selected:
-            self.setStyleSheet("background: #3c3c3c; border-radius: 8px; border: 2px solid #007aff;")
+            self.setStyleSheet("background: rgba(255, 255, 255, 20); border-radius: 8px; border: 2px solid #bf5af2;")
         else:
-            self.setStyleSheet("background: #333; border-radius: 8px; border: 1px solid #444;")
+            self.setStyleSheet("background: rgba(255, 255, 255, 5); border-radius: 8px; border: 1px solid rgba(255, 255, 255, 10);")
 
 class PreviewGallery(QScrollArea):
     style_selected = Signal(str)
@@ -50,12 +50,12 @@ class PreviewGallery(QScrollArea):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWidgetResizable(True)
-        self.setFixedWidth(160)
+        self.setFixedWidth(180)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet("QScrollArea { border: none; background: #252526; }")
+        self.setStyleSheet("QScrollArea { border: none; background: transparent; border-left: 1px solid rgba(255, 255, 255, 10); }")
         
         self.container = QWidget()
-        self.container.setStyleSheet("background: #252526;")
+        self.container.setStyleSheet("background: transparent;")
         self.layout = QVBoxLayout(self.container)
         self.layout.setContentsMargins(10, 10, 10, 10)
         self.layout.setSpacing(15)

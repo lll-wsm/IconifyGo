@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QMessageBox, QPushButton
 from PySide6.QtCore import QTimer, Qt
 from src.ui.bottom_bar import BottomBar
 from src.ui.preview_gallery import PreviewGallery
@@ -16,8 +16,26 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("IconifyGo")
-        self.resize(780, 600)
-        self.setStyleSheet("background: #1e1e1e; color: #fff;")
+        self.resize(700, 600)
+
+        # Enable Glass/Translucent background
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        self.setStyleSheet("""
+            QMainWindow {
+                background: transparent;
+            }
+            #CentralWidget {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                    stop:0 rgba(80, 30, 140, 200), 
+                    stop:0.5 rgba(40, 15, 80, 220), 
+                    stop:1 rgba(20, 5, 40, 240));
+                border: 1px solid rgba(255, 255, 255, 20);
+                border-radius: 20px;
+            }
+            QLabel { color: white; }
+        """)
 
         self.image_processor = ImageProcessor()
         self.bg_worker = None
@@ -38,9 +56,21 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_pos)
+            event.accept()
+
     def init_ui(self) -> None:
         self.central_widget = QWidget()
+        self.central_widget.setObjectName("CentralWidget")
         self.setCentralWidget(self.central_widget)
+
         
         self.main_layout = QHBoxLayout(self.central_widget)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -60,6 +90,66 @@ class MainWindow(QMainWindow):
         self.left_layout.addWidget(self.bottom_bar)
         
         self.main_layout.addWidget(self.left_widget, 1)
+
+        # macOS Style Traffic Lights (Top Left)
+        self.controls_widget = QWidget(self.central_widget)
+        self.controls_layout = QHBoxLayout(self.controls_widget)
+        self.controls_layout.setContentsMargins(15, 15, 0, 0)
+        self.controls_layout.setSpacing(8)
+        
+        # Close (Red)
+        self.close_btn = QPushButton("×")
+        self.close_btn.setFixedSize(12, 12)
+        self.close_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: #ff5f56; 
+                border-radius: 6px; 
+                border: none; 
+                color: transparent;
+                font-size: 9px;
+                font-weight: bold;
+                padding-bottom: 2px;
+            }
+            QPushButton:hover { 
+                background-color: #ff7b72; 
+                color: rgba(0, 0, 0, 150);
+            }
+        """)
+        self.close_btn.clicked.connect(self.close)
+        
+        # Minimize (Yellow)
+        self.min_btn = QPushButton("-")
+        self.min_btn.setFixedSize(12, 12)
+        self.min_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: #ffbd2e; 
+                border-radius: 6px; 
+                border: none; 
+                color: transparent;
+                font-size: 14px;
+                font-weight: bold;
+                padding-bottom: 3px;
+            }
+            QPushButton:hover { 
+                background-color: #ffcf67; 
+                color: rgba(0, 0, 0, 150);
+            }
+        """)
+        self.min_btn.clicked.connect(self.showMinimized)
+        
+        # Maximize (Green - Disabled)
+        self.max_btn = QPushButton()
+        self.max_btn.setFixedSize(12, 12)
+        self.max_btn.setEnabled(False)
+        self.max_btn.setStyleSheet("""
+            QPushButton { background-color: #4d4d4d; border-radius: 6px; border: none; }
+        """)
+        
+        self.controls_layout.addWidget(self.close_btn)
+        self.controls_layout.addWidget(self.min_btn)
+        self.controls_layout.addWidget(self.max_btn)
+        self.controls_widget.adjustSize()
+        self.controls_widget.move(0, 0)
         
         # Right Side (Gallery)
         self.gallery = PreviewGallery()
@@ -89,7 +179,7 @@ class MainWindow(QMainWindow):
             return
         
         if self.image_processor.reset_to_original():
-            self.statusBar().showMessage("Reset to original image", 3000)
+            self.bottom_bar.show_message("Reset to original image", 3000)
             self.refresh_all()
         else:
             QMessageBox.warning(self, "Warning", "No original image to restore.")
@@ -106,7 +196,7 @@ class MainWindow(QMainWindow):
             return
 
         self.bottom_bar.erase_btn.setEnabled(False)
-        self.statusBar().showMessage("Removing watermark...")
+        self.bottom_bar.show_message("Removing watermark...")
 
         self.inpaint_worker = InpaintWorker(params[0], params[1], strength=self.inpaint_strength)
         self.inpaint_worker.finished.connect(self.on_inpaint_done)
@@ -118,7 +208,7 @@ class MainWindow(QMainWindow):
         self.image_processor.apply_inpaint_result(result_image)
         self.refresh_all()
         self.bottom_bar.erase_btn.setEnabled(True)
-        self.statusBar().showMessage("Watermark removed successfully", 3000)
+        self.bottom_bar.show_message("Watermark removed successfully", 3000)
 
     def on_inpaint_error(self, error_msg) -> None:
         """Handle inpaint failure."""
@@ -198,7 +288,7 @@ class MainWindow(QMainWindow):
             return
 
         self.bottom_bar.remove_bg_btn.setEnabled(False)
-        self.statusBar().showMessage("Removing background...")
+        self.bottom_bar.show_message("Removing background...")
 
         self.bg_worker = RembgWorker(self.image_processor.current_image, model_name=self.selected_model)
         self.bg_worker.finished.connect(self.on_bg_removed)
@@ -209,7 +299,7 @@ class MainWindow(QMainWindow):
         self.image_processor.apply_bg_removed_mask(result_image)
         self.refresh_all()
         self.bottom_bar.remove_bg_btn.setEnabled(True)
-        self.statusBar().showMessage("Background removed successfully", 3000)
+        self.bottom_bar.show_message("Background removed successfully", 3000)
 
     def on_bg_error(self, error_msg) -> None:
         QMessageBox.critical(self, "Error", f"Background removal failed: {error_msg}")
