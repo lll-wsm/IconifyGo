@@ -140,10 +140,10 @@ class ImageProcessor:
             cv2.ellipse(target_mask, end, (radius, radius // 2), 0, 0, 360, value, -1)
 
     def execute_inpaint(self, strength: str = "medium") -> None:
-        """Applies improved multi-pass inpainting to the current image using the watermark mask.
+        """Applies progressive peeling (onion-skin) inpainting to the current image using the watermark mask.
 
-        Uses mask dilation for full watermark coverage, adaptive radius based on
-        mask area, and three inpainting passes for structure, smoothness, and detail.
+        Uses mask dilation for full watermark coverage, a progressive erosion loop,
+        and a seamless feathering blend to remove watermark and prevent blur/wave artifacts.
 
         Args:
             strength: Inpainting strength — 'light', 'medium', or 'strong'.

@@ -317,10 +317,11 @@ class MainWindow(QMainWindow):
             return
 
         self.bottom_bar.erase_btn.setEnabled(False)
-        self.bottom_bar.show_message("Removing watermark...")
+        self.bottom_bar.show_message("Removing watermark...", 0)  # Use 0 timeout to prevent auto-clear
         self.bottom_bar.set_progress_active(True)
 
         self.inpaint_worker = InpaintWorker(params[0], params[1], strength=self.inpaint_strength)
+        self.inpaint_worker.progress.connect(lambda msg: self.bottom_bar.show_message(msg, 0))
         self.inpaint_worker.finished.connect(self.on_inpaint_done)
         self.inpaint_worker.error.connect(self.on_inpaint_error)
         self.inpaint_worker.start()

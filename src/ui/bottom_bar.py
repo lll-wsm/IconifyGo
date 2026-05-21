@@ -423,7 +423,7 @@ class BottomBar(QWidget):
         line.setStyleSheet("background-color: rgba(255, 255, 255, 15); border: none; min-height: 1px; max-height: 1px;")
         layout.addWidget(line)
         
-        strength_title = QLabel("选择去除强度")
+        strength_title = QLabel("传统算法去除 (渐进修复)")
         strength_title.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 150);")
         layout.addWidget(strength_title)
         
@@ -437,6 +437,23 @@ class BottomBar(QWidget):
             strength_row.addWidget(btn)
             
         layout.addLayout(strength_row)
+        
+        # AI option section
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.HLine)
+        line2.setStyleSheet("background-color: rgba(255, 255, 255, 15); border: none; min-height: 1px; max-height: 1px;")
+        layout.addWidget(line2)
+        
+        ai_title = QLabel("AI 智能去水印 (首次需下载模型)")
+        ai_title.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 150);")
+        layout.addWidget(ai_title)
+        
+        ai_row = QHBoxLayout()
+        ai_btn = QPushButton("AI 智能擦除")
+        ai_btn.setStyleSheet("background: #007aff; color: white; font-weight: bold; padding: 4px 12px;")
+        ai_btn.clicked.connect(lambda checked: [self.erase_watermark_clicked.emit("ai"), popover.close()])
+        ai_row.addWidget(ai_btn)
+        layout.addLayout(ai_row)
         
         popover.set_widget(content)
         popover.show_above(self.erase_btn)
