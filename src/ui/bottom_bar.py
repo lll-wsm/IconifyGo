@@ -135,6 +135,23 @@ class TextSettingsWidget(QWidget):
         }
         self.accepted.emit(text, params)
 
+    def set_values(self, text: str, font_name: str, font_size: int, color, weight: str, alignment: str):
+        self.text_edit.setPlainText(text)
+        self.font_combo.setCurrentText(font_name)
+        self.size_slider.setValue(font_size)
+        if isinstance(color, QColor):
+            self.current_color = color
+        else:
+            self.current_color = QColor(color[0], color[1], color[2])
+        self.update_color_button()
+        self.weight_combo.setCurrentText(weight)
+        for btn in self.align_group.buttons():
+            if btn.property("mode") == alignment:
+                btn.setChecked(True)
+            else:
+                btn.setChecked(False)
+
+
 class SvgIconButton(QPushButton):
     def __init__(self, icon_name, tooltip="", parent=None):
         super().__init__(parent)
@@ -187,6 +204,7 @@ class BottomBar(QWidget):
     bg_color_changed = Signal(object)  # QColor
     sketch_clicked = Signal(int)
     wm_tool_changed = Signal(str)
+    subject_scale_changed = Signal(float)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -322,6 +340,13 @@ class BottomBar(QWidget):
         self.palette_btn.clicked.connect(self.show_bg_color_picker)
         self.layout.addWidget(self.palette_btn)
 
+        self.scale_btn = SvgIconButton("scale", "Adjust Subject Scale")
+        self.scale_btn.setCheckable(False)
+        self.scale_btn.clicked.connect(self.show_scale_menu)
+        self.scale_btn.setEnabled(False)
+        self.layout.addWidget(self.scale_btn)
+        self.current_subject_scale = 1.0
+
         self.layout.addStretch()
 
         # 4. Export Button (Compact)
@@ -367,6 +392,17 @@ class BottomBar(QWidget):
         for btn in self.tool_group.buttons():
             btn.setChecked(False)
         self.tool_group.setExclusive(True)
+
+    def set_tool(self, tool_name: str) -> None:
+        """Programmatically select a tool in the bottom bar."""
+        tools = ["pointer", "brush", "eraser"]
+        if tool_name in tools:
+            idx = tools.index(tool_name)
+            btn = self.tool_group.button(idx)
+            if btn:
+                btn.setChecked(True)
+                self.tool_changed.emit(tool_name)
+
 
     def show_inpaint_menu(self):
         from .popover import ActionPopover
@@ -510,6 +546,34 @@ class BottomBar(QWidget):
         layout.addWidget(slider)
         popover.set_widget(content)
         popover.show_above(self.size_btn)
+
+    def set_subject_scale(self, scale: float) -> None:
+        self.current_subject_scale = scale
+
+    def show_scale_menu(self):
+        from .popover import ActionPopover
+        popover = ActionPopover(self)
+        content = QWidget()
+        content.setFixedWidth(150)
+        layout = QVBoxLayout(content)
+        
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(20, 200)
+        slider.setValue(int(self.current_subject_scale * 100))
+        
+        label = QLabel(f"Subject Scale: {slider.value()}%")
+        label.setStyleSheet("color: white; font-size: 11px;")
+        
+        def on_value_changed(val):
+            label.setText(f"Subject Scale: {val}%")
+            self.current_subject_scale = val / 100.0
+            self.subject_scale_changed.emit(self.current_subject_scale)
+            
+        slider.valueChanged.connect(on_value_changed)
+        layout.addWidget(label)
+        layout.addWidget(slider)
+        popover.set_widget(content)
+        popover.show_above(self.scale_btn)
 
     def show_text_menu(self):
         from .popover import ActionPopover

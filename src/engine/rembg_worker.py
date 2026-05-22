@@ -1,7 +1,24 @@
 import cv2
 import numpy as np
-import rembg
 import os
+import sys
+from unittest.mock import MagicMock
+
+# Mock out heavy dependencies that are imported by rembg but not used by us.
+# This prevents PyInstaller from bundling them and saves ~165MB.
+for module_name in [
+    'pymatting',
+    'pymatting.alpha.estimate_alpha_cf',
+    'pymatting.foreground.estimate_foreground_ml',
+    'pymatting.util.util',
+    'scipy',
+    'scipy.ndimage',
+    'skimage',
+    'skimage.morphology',
+]:
+    sys.modules[module_name] = MagicMock()
+
+import rembg
 from PySide6.QtCore import QThread, Signal
 
 class RembgWorker(QThread):
@@ -101,7 +118,7 @@ class RembgWorker(QThread):
             result_rgba = rembg.remove(
                 img_to_proc,
                 session=session,
-                post_process_mask=True,
+                post_process_mask=False,
             )
 
             # Ensure result is writable (rembg may return read-only arrays)

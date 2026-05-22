@@ -60,7 +60,7 @@ class DocumentStyleEngine:
         )
         return base
 
-    def apply_document_style(self, logo_cv: np.ndarray, color: tuple = (255, 255, 255), opacity: float = 1.0, scale: float = 0.5, layout: str = "center") -> np.ndarray:
+    def apply_document_style(self, logo_cv: np.ndarray, color: tuple = (255, 255, 255), opacity: float = 1.0, scale: float = 0.5, layout: str = "center", scale_multiplier: float = 1.0) -> np.ndarray:
         """Applies document style using the PNG template."""
         h, w = logo_cv.shape[:2]
         if max(h, w) > 2048:
@@ -87,9 +87,21 @@ class DocumentStyleEngine:
 
         # Bounding box of the document template at 1024x1024
         # Original bbox (54, 5, 420, 488) at 512x512 translates to (108, 10, 840, 976)
-        bbox = (108, 10, 840, 976)
-        bbox_w = bbox[2] - bbox[0] # 732
-        bbox_h = bbox[3] - bbox[1] # 966
+        orig_bbox = (108, 10, 840, 976)
+        orig_w = orig_bbox[2] - orig_bbox[0] # 732
+        orig_h = orig_bbox[3] - orig_bbox[1] # 966
+        orig_cx = (orig_bbox[0] + orig_bbox[2]) // 2
+        orig_cy = (orig_bbox[1] + orig_bbox[3]) // 2
+
+        bbox_w = int(orig_w * scale_multiplier)
+        bbox_h = int(orig_h * scale_multiplier)
+
+        bbox = (
+            orig_cx - bbox_w // 2,
+            orig_cy - bbox_h // 2,
+            orig_cx + bbox_w // 2,
+            orig_cy + bbox_h // 2
+        )
 
         if layout == "cover":
             # Scale logo to cover the document bbox (aspect ratio preserving)
@@ -125,11 +137,11 @@ class DocumentStyleEngine:
             background = Image.alpha_composite(background, masked_logo)
             
         else: # "center"
-            center_x = bbox[0] + bbox_w // 2 # 474
-            center_y = bbox[1] + bbox_h // 2 # 493
+            center_x = bbox[0] + bbox_w // 2
+            center_y = bbox[1] + bbox_h // 2
             
             # Place the logo centered on the document
-            target_size = int(min(bbox_w, bbox_h) * scale)
+            target_size = int(min(bbox_w, bbox_h) * scale * scale_multiplier)
             
             logo_w, logo_h = logo_pil.size
             aspect = logo_w / logo_h

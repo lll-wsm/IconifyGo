@@ -72,7 +72,7 @@ class FolderStyleEngine:
                                 radius=corner_radius, fill=rgb + (255,))
         return base
 
-    def apply_folder_style(self, logo_cv: np.ndarray, color: str = "#5ac8fa", opacity: float = 1.0, scale: float = 0.5, preset: str = "generic", layout: str = "center") -> np.ndarray:
+    def apply_folder_style(self, logo_cv: np.ndarray, color: str = "#5ac8fa", opacity: float = 1.0, scale: float = 0.5, preset: str = "generic", layout: str = "center", scale_multiplier: float = 1.0) -> np.ndarray:
         """Applies folder style using the PNG template."""
         h, w = logo_cv.shape[:2]
         if max(h, w) > 2048:
@@ -99,9 +99,21 @@ class FolderStyleEngine:
 
         if layout == "cover":
             # Bounding box of the folder template at 1024x1024: (28, 109, 996, 932)
-            bbox = (28, 109, 996, 932)
-            bbox_w = bbox[2] - bbox[0]
-            bbox_h = bbox[3] - bbox[1]
+            orig_bbox = (28, 109, 996, 932)
+            orig_w = orig_bbox[2] - orig_bbox[0]
+            orig_h = orig_bbox[3] - orig_bbox[1]
+            orig_cx = (orig_bbox[0] + orig_bbox[2]) // 2
+            orig_cy = (orig_bbox[1] + orig_bbox[3]) // 2
+            
+            bbox_w = int(orig_w * scale_multiplier)
+            bbox_h = int(orig_h * scale_multiplier)
+            
+            bbox = (
+                orig_cx - bbox_w // 2,
+                orig_cy - bbox_h // 2,
+                orig_cx + bbox_w // 2,
+                orig_cy + bbox_h // 2
+            )
             
             # Resize logo to cover the bbox (aspect ratio preserving)
             logo_w, logo_h = logo_pil.size
@@ -142,7 +154,7 @@ class FolderStyleEngine:
             center_x = self.size // 2
             center_y = int(self.size * 0.6) # Shifted down to match the front flap visual center
             
-            target_size = int(min(area_width, area_height) * scale)
+            target_size = int(min(area_width, area_height) * scale * scale_multiplier)
             
             logo_w, logo_h = logo_pil.size
             aspect = logo_w / logo_h

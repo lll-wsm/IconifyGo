@@ -40,7 +40,18 @@ pyinstaller --noconfirm --windowed \
     --hidden-import "PySide6.QtSvgWidgets" \
     --collect-all "rembg" \
     --collect-all "onnxruntime" \
-    --collect-all "pymatting" \
+    --exclude-module "pymatting" \
+    --exclude-module "numba" \
+    --exclude-module "llvmlite" \
+    --exclude-module "scipy" \
+    --exclude-module "skimage" \
+    --exclude-module "PySide6.QtPdf" \
+    --exclude-module "PySide6.QtQml" \
+    --exclude-module "PySide6.QtQuick" \
+    --exclude-module "PySide6.QtVirtualKeyboard" \
+    --exclude-module "PySide6.QtDBus" \
+    --exclude-module "PySide6.QtNetwork" \
+    --exclude-module "PySide6.QtOpenGL" \
     "$MAIN_SCRIPT"
 
 # 5. Check result

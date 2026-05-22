@@ -1,14 +1,152 @@
-from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QLabel, QGraphicsEllipseItem, QGraphicsRectItem
-from PySide6.QtGui import QBrush, QColor, QPainter, QPixmap, QWheelEvent, QMouseEvent, QPen, QPainterPath
+from PySide6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QWidget, QLabel, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsItem
+from PySide6.QtGui import QBrush, QColor, QPainter, QPixmap, QWheelEvent, QMouseEvent, QPen, QPainterPath, QFont, QFontMetricsF
 from PySide6.QtCore import Qt, Signal, QPointF, QTimer, QPoint, QRectF
 import numpy as np
 import time
 from typing import Optional
 
+class InteractiveTextItem(QGraphicsItem):
+    def __init__(self, text: str, font_name: str = "Arial", font_size: int = 40,
+                 color: tuple = (255, 255, 255), weight: str = "Regular",
+                 alignment: str = "center", parent=None):
+        super().__init__(parent)
+        self.text = text
+        self.font_name = font_name
+        self.font_size = font_size
+        self.color = QColor(color[0], color[1], color[2])
+        self.weight = weight
+        self.alignment = alignment
+        
+        self.setFlags(QGraphicsItem.ItemIsMovable |
+                      QGraphicsItem.ItemIsSelectable |
+                      QGraphicsItem.ItemSendsGeometryChanges)
+        self.setAcceptHoverEvents(True)
+        self.setZValue(10) # Keep on top of image background (Z=1)
+        
+        self.is_resizing = False
+        self.rendering_mode = False
+        
+        self.update_font()
+        
+    def update_font(self):
+        self.font = QFont(self.font_name)
+        self.font.setPointSize(self.font_size)
+        if self.weight == "Bold":
+            self.font.setBold(True)
+        elif self.weight == "Italic":
+            self.font.setItalic(True)
+            
+        # Compute original dimensions
+        fm = QFontMetricsF(self.font)
+        align_flag = Qt.AlignVCenter
+        if self.alignment == "left":
+            align_flag |= Qt.AlignLeft
+        elif self.alignment == "right":
+            align_flag |= Qt.AlignRight
+        else:
+            align_flag |= Qt.AlignHCenter
+            
+        self.orig_rect = fm.boundingRect(
+            QRectF(0, 0, 10000, 10000),
+            align_flag | Qt.TextDontClip,
+            self.text
+        )
+        self.orig_rect = QRectF(0, 0, self.orig_rect.width(), self.orig_rect.height())
+        self.prepareGeometryChange()
+        
+    def text_rect(self) -> QRectF:
+        return self.orig_rect
+        
+    def handle_rect(self) -> QRectF:
+        rect = self.text_rect()
+        h_size = 10
+        return QRectF(rect.right() - h_size/2, rect.bottom() - h_size/2, h_size, h_size)
+        
+    def boundingRect(self) -> QRectF:
+        rect = self.text_rect()
+        h_rect = self.handle_rect()
+        return rect.united(h_rect).adjusted(-2, -2, 2, 2)
+        
+    def paint(self, painter: QPainter, option, widget=None):
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        
+        painter.setFont(self.font)
+        painter.setPen(self.color)
+        
+        align_flag = Qt.AlignVCenter
+        if self.alignment == "left":
+            align_flag |= Qt.AlignLeft
+        elif self.alignment == "right":
+            align_flag |= Qt.AlignRight
+        else:
+            align_flag |= Qt.AlignHCenter
+            
+        rect = self.text_rect()
+        painter.drawText(rect, align_flag | Qt.TextDontClip, self.text)
+        
+        if self.isSelected() and not getattr(self, 'rendering_mode', False):
+            pen = QPen(QColor(0, 122, 255), 1.5, Qt.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(rect)
+            
+            h_rect = self.handle_rect()
+            painter.setPen(QPen(QColor(0, 122, 255), 1.5))
+            painter.setBrush(QBrush(QColor(255, 255, 255)))
+            painter.drawRect(h_rect)
+            
+    def mousePressEvent(self, event):
+        if self.isSelected() and self.handle_rect().contains(event.pos()):
+            self.is_resizing = True
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+            
+    def mouseMoveEvent(self, event):
+        if self.is_resizing:
+            pos_scene = event.scenePos()
+            item_pos_scene = self.pos()
+            orig_w = self.orig_rect.width()
+            dx = pos_scene.x() - item_pos_scene.x()
+            if orig_w > 0:
+                new_scale = dx / orig_w
+                new_scale = max(0.1, min(new_scale, 20.0))
+                self.setScale(new_scale)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+            
+    def mouseReleaseEvent(self, event):
+        if self.is_resizing:
+            self.is_resizing = False
+            event.accept()
+            scene = self.scene()
+            if scene:
+                for view in scene.views():
+                    if hasattr(view, 'text_item_changed'):
+                        view.text_item_changed.emit()
+        else:
+            super().mouseReleaseEvent(event)
+            scene = self.scene()
+            if scene:
+                for view in scene.views():
+                    if hasattr(view, 'text_item_changed'):
+                        view.text_item_changed.emit()
+
+    def hoverMoveEvent(self, event):
+        if self.isSelected() and self.handle_rect().contains(event.pos()):
+            self.setCursor(Qt.SizeFDiagCursor)
+        else:
+            self.setCursor(Qt.SizeAllCursor)
+        super().hoverMoveEvent(event)
+
 class IconifyCanvas(QGraphicsView):
     mask_updated = Signal(object)
     file_dropped = Signal(str)
     canvas_clicked = Signal()
+    text_item_changed = Signal()
+    text_item_double_clicked = Signal(object)
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -80,6 +218,25 @@ class IconifyCanvas(QGraphicsView):
         self.setAcceptDrops(True)
         self.viewport().setAcceptDrops(True)
 
+    def cleanup(self) -> None:
+        """Release Python wrapper references before Qt destroys C++ objects.
+        
+        This prevents Shiboken double-free crashes on exit. The key insight:
+        - scene.clear() destroys C++ objects while Python wrappers still hold pointers
+        - Then nulling self.image_item triggers wrapper dealloc → C++ destructor on freed memory → SIGSEGV
+        
+        Instead, we null Python references first (while C++ objects are still alive).
+        Since scene.addItem() transferred C++ ownership to the scene, Shiboken
+        will NOT call C++ destructors when the Python wrappers are released.
+        Qt's widget tree destruction will later clean up the C++ objects safely.
+        """
+        self.image_item = None
+        self.bg_color_item = None
+        self.preview_item = None
+        self.brush_cursor = None
+        self.placeholder_proxy = None
+        self.placeholder_label = None
+
     def restore_render_quality(self):
         self.is_zooming = False
         self.setRenderHint(QPainter.SmoothPixmapTransform, True)
@@ -104,8 +261,23 @@ class IconifyCanvas(QGraphicsView):
         painter.end()
         self.setBackgroundBrush(QBrush(pixmap))
 
+    def setCursor(self, cursor) -> None:
+        super().setCursor(cursor)
+        self.viewport().setCursor(cursor)
+
+    def _update_items_interaction_state(self) -> None:
+        is_pointer = (self.current_tool == "pointer")
+        for item in self.scene.items():
+            if isinstance(item, InteractiveTextItem):
+                item.setAcceptHoverEvents(is_pointer)
+                item.setFlag(QGraphicsItem.ItemIsMovable, is_pointer)
+                item.setFlag(QGraphicsItem.ItemIsSelectable, is_pointer)
+                if not is_pointer:
+                    item.setSelected(False)
+
     def set_tool(self, tool_name: str) -> None:
         self.current_tool = tool_name
+        self._update_items_interaction_state()
         if tool_name == "pointer":
             self.setCursor(Qt.OpenHandCursor)
             self.brush_cursor.hide()
@@ -154,7 +326,7 @@ class IconifyCanvas(QGraphicsView):
         for item in self.scene.items():
             if item != self.placeholder_proxy and item != self.brush_cursor:
                 self.scene.removeItem(item)
-        self.placeholder_proxy.hide()
+        self.update_placeholder_visibility()
         self.bg_color_item = None
         self.preview_item = None
         
@@ -183,6 +355,19 @@ class IconifyCanvas(QGraphicsView):
         self.fit_in_view()
         return self.image_item
 
+    def update_placeholder_visibility(self) -> None:
+        """Show or hide the placeholder label based on the presence of image or text items."""
+        if self.placeholder_proxy is None:
+            return
+        has_image = hasattr(self, 'image_item') and self.image_item is not None and self.image_item.scene() == self.scene
+        has_text = any(isinstance(item, InteractiveTextItem) for item in self.scene.items())
+        
+        if has_image or has_text:
+            self.placeholder_proxy.hide()
+        else:
+            self.placeholder_proxy.show()
+
+
     def set_bg_color(self, color: QColor) -> None:
         """Set the background color behind the image."""
         self.bg_color = color
@@ -205,7 +390,7 @@ class IconifyCanvas(QGraphicsView):
             
         self.preview_item = self.scene.addPixmap(pixmap)
         self.preview_item.setOffset(-pixmap.width() / 2, -pixmap.height() / 2)
-        self.preview_item.setZValue(2)  # On top of everything
+        self.preview_item.setZValue(2)  # On top of image background but below text (Z=10)
         
         # Hide the background color item for previews so the template shape is visible
         if self.bg_color_item:
@@ -293,7 +478,24 @@ class IconifyCanvas(QGraphicsView):
  
         self.scale(zoom_factor, zoom_factor)
 
+    def _text_item_at(self, pos: QPoint) -> Optional[InteractiveTextItem]:
+        scene_pos = self.mapToScene(pos)
+        items = self.scene.items(scene_pos)
+        for item in items:
+            curr = item
+            while curr:
+                if isinstance(curr, InteractiveTextItem):
+                    return curr
+                curr = curr.parentItem()
+        return None
+
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        text_item = self._text_item_at(event.pos())
+        if text_item is not None:
+            self.text_item_double_clicked.emit(text_item)
+            event.accept()
+            return
+
         if self.image_item:
             self.fit_in_view()
             event.accept()
@@ -301,18 +503,47 @@ class IconifyCanvas(QGraphicsView):
             super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event) -> None:
+        if event.key() in [Qt.Key_Delete, Qt.Key_Backspace]:
+            selected_items = self.scene.selectedItems()
+            if selected_items:
+                removed_any = False
+                for item in selected_items:
+                    if isinstance(item, InteractiveTextItem):
+                        self.scene.removeItem(item)
+                        removed_any = True
+                if removed_any:
+                    self.update_placeholder_visibility()
+                    self.text_item_changed.emit()
+                event.accept()
+                return
+
+
         if event.modifiers() & (Qt.ControlModifier | Qt.MetaModifier) and event.key() == Qt.Key_0:
             self.fit_in_view()
+            event.accept()
             return
         super().keyPressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if self.current_tool == "pointer":
+            text_item = self._text_item_at(event.pos())
+            if text_item is not None:
+                super().mousePressEvent(event)
+                return
+        
         if self.image_item is None:
             if event.button() == Qt.LeftButton:
-                self.canvas_clicked.emit()
+                has_text = any(isinstance(item, InteractiveTextItem) for item in self.scene.items())
+                if has_text:
+                    if self.current_tool == "pointer":
+                        self.scene.clearSelection()
+                        super().mousePressEvent(event)
+                else:
+                    self.canvas_clicked.emit()
             return
         if event.button() == Qt.LeftButton:
             if self.current_tool == "pointer":
+                self.scene.clearSelection()
                 self.is_panning = True
                 self.pan_start_pos = event.pos()
                 self.setCursor(Qt.ClosedHandCursor)
@@ -321,6 +552,11 @@ class IconifyCanvas(QGraphicsView):
                 self.last_point = self.mapToScene(event.pos())
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self.current_tool == "pointer":
+            if self.scene.mouseGrabberItem() and isinstance(self.scene.mouseGrabberItem(), InteractiveTextItem):
+                super().mouseMoveEvent(event)
+                return
+
         if getattr(self, 'is_panning', False):
             delta = event.pos() - self.pan_start_pos
             h_bar = self.horizontalScrollBar()
@@ -345,6 +581,12 @@ class IconifyCanvas(QGraphicsView):
             self.last_point = pos_scene
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self.current_tool == "pointer":
+            grabber = self.scene.mouseGrabberItem()
+            if grabber and isinstance(grabber, InteractiveTextItem):
+                super().mouseReleaseEvent(event)
+                return
+
         if getattr(self, 'is_panning', False):
             self.is_panning = False
             if self.current_tool == "pointer":

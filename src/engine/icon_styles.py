@@ -6,8 +6,9 @@ from typing import Optional, Tuple, Dict, Callable
 class IconStyleEngine:
     def __init__(self, size: int = 1024):
         self.size = size
+        self.min_size = size
         self.background_color = (255, 255, 255, 255)
-        self._cache: Dict[Tuple[str, int], Image.Image] = {}
+        self._cache: Dict[Tuple[str, int, Tuple[int, ...]], Image.Image] = {}
         self._style_registry: Dict[str, Tuple[Callable[[], Image.Image], float]] = {
             "big_sur": (self.create_big_sur_background, 0.6),
             "catalina": (self.create_catalina_background, 0.65),
@@ -201,7 +202,7 @@ class IconStyleEngine:
             
         return self._cache[cache_key].copy(), self._style_registry[style_name][1]
 
-    def apply_style(self, logo_cv: np.ndarray, style_name: str) -> np.ndarray:
+    def apply_style(self, logo_cv: np.ndarray, style_name: str, scale_multiplier: float = 1.0) -> np.ndarray:
         """
         Applies a macOS style to a logo image.
         logo_cv: RGBA numpy array (OpenCV format)
@@ -214,7 +215,7 @@ class IconStyleEngine:
         h, w = logo_cv.shape[:2]
         max_dim = max(h, w)
         if abs(self.size - (max_dim / 0.6)) > 50: # roughly estimate background size
-            self.size = int(max_dim / 0.6)
+            self.size = max(self.min_size, int(max_dim / 0.6))
             # Cache is still valid for other sizes, but we want a good base size
 
         background, content_scale = self.get_background(style_name)
@@ -232,7 +233,7 @@ class IconStyleEngine:
         
         # Resize logo to fit inside background
         bg_w, bg_h = background.size
-        target_size = int(min(bg_w, bg_h) * content_scale)
+        target_size = int(min(bg_w, bg_h) * content_scale * scale_multiplier)
         
         logo_w, logo_h = logo_pil.size
         aspect = logo_w / logo_h

@@ -1,8 +1,9 @@
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QMessageBox, QPushButton, QDialog, QLabel
 from PySide6.QtCore import QTimer, Qt, QPoint
+from PySide6.QtGui import QImage, QPainter
 from src.ui.bottom_bar import BottomBar
 from src.ui.preview_gallery import PreviewGallery
-from src.ui.canvas import IconifyCanvas
+from src.ui.canvas import IconifyCanvas, InteractiveTextItem
 from src.engine.processor import ImageProcessor
 from src.engine.rembg_worker import RembgWorker
 from src.engine.inpaint_worker import InpaintWorker
@@ -11,6 +12,8 @@ from src.engine.icon_styles import IconStyleEngine
 from src.engine.folder_styles import FolderStyleEngine
 from src.engine.document_styles import DocumentStyleEngine
 from src.utils.export import export_icns, export_png_set
+from src.utils.text_renderer import serialize_text_item, draw_text_on_np
+import numpy as np
 
 class ModernMessageBox(QDialog):
     def __init__(self, parent=None, title="Notification", text="", is_error=False, is_warning=False):
@@ -130,7 +133,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("IconifyGo")
-        self.resize(510, 555) # Tight initial size: 450(canvas) + 60(margins)
+        self.setFixedSize(510, 555) # Tight initial size: 450(canvas) + 60(margins)
         
         # Enable Glass/Translucent background
 
@@ -159,6 +162,7 @@ class MainWindow(QMainWindow):
         self.selected_model = "isnet-general-use"
         self.inpaint_strength = "medium"
         self.style_bg_colors = {}
+        self.style_subject_scales = {}
 
         # Timer for throttled refresh of the MAIN CANVAS ONLY (for smooth drawing)
         self.refresh_timer = QTimer()
@@ -289,10 +293,85 @@ class MainWindow(QMainWindow):
         self.canvas.canvas_clicked.connect(self.open_file)
         self.canvas.file_dropped.connect(self.open_file_from_path)
         self.gallery.style_selected.connect(self.on_preview_style_selected)
+        self.bottom_bar.subject_scale_changed.connect(self.on_subject_scale_changed)
+        self.canvas.text_item_changed.connect(self.refresh_all)
+        self.canvas.text_item_double_clicked.connect(self.on_text_item_double_clicked)
 
     def on_text_added(self, text, params):
-        self.image_processor.add_text_overlay(text, **params)
+        item = InteractiveTextItem(
+            text=text,
+            font_name=params.get("font_name", "Arial"),
+            font_size=params.get("font_size", 40),
+            color=params.get("color", (255, 255, 255)),
+            weight=params.get("weight", "Regular"),
+            alignment=params.get("alignment", "center")
+        )
+        # Center the text item on the scene (0, 0)
+        orig_w = item.orig_rect.width()
+        orig_h = item.orig_rect.height()
+        item.setPos(-orig_w / 2.0, -orig_h / 2.0)
+
+        self.canvas.scene.addItem(item)
+        self.canvas.scene.clearSelection()
+        item.setSelected(True)
+        self.bottom_bar.set_tool("pointer")
+        self.canvas.set_tool("pointer")
+
+        # Hide the placeholder label since we added text
+        self.canvas.update_placeholder_visibility()
+
+        # Show gallery and adjust window size if hidden
+        if self.gallery.isHidden():
+            self.style_bg_colors = {}
+            self.gallery.select_style("original")
+            self.setFixedSize(710, 555)
+            self.gallery.show()
+
         self.refresh_all()
+
+    def on_text_item_double_clicked(self, item: InteractiveTextItem):
+        from src.ui.popover import ActionPopover
+        from src.ui.bottom_bar import TextSettingsWidget
+        from PySide6.QtGui import QColor
+
+        popover = ActionPopover(self)
+        content = TextSettingsWidget()
+        content.set_values(
+            text=item.text,
+            font_name=item.font_name,
+            font_size=item.font_size,
+            color=item.color,
+            weight=item.weight,
+            alignment=item.alignment
+        )
+
+        def on_accepted(text, params):
+            if not text.strip():
+                self.canvas.scene.removeItem(item)
+                self.canvas.update_placeholder_visibility()
+            else:
+                item.text = text
+                item.font_name = params.get("font_name", "Arial")
+                item.font_size = params.get("font_size", 40)
+                item.color = QColor(*params.get("color", (255, 255, 255)))
+                item.weight = params.get("weight", "Regular")
+                item.alignment = params.get("alignment", "center")
+                item.update_font()
+                item.update()
+            self.refresh_all()
+            popover.close()
+
+        content.accepted.connect(on_accepted)
+        content.rejected.connect(popover.close)
+        popover.set_widget(content)
+        popover.show_above(self.bottom_bar.text_btn)
+
+    def on_subject_scale_changed(self, scale: float) -> None:
+        selected_style = self.gallery.selected_style_id
+        if selected_style and selected_style != "original":
+            self.style_subject_scales[selected_style] = scale
+            self.on_preview_style_selected(selected_style)
+            self.preview_timer.start(300)
 
     def reset_image(self) -> None:
         """Reset the image to its original state."""
@@ -407,6 +486,73 @@ class MainWindow(QMainWindow):
             # Re-generate the gallery previews in the sidebar to reflect the new background color
             self._run_async_preview()
 
+    def get_canvas_ref_size(self) -> tuple:
+        if self.canvas.preview_item and self.canvas.preview_item.pixmap():
+            pm = self.canvas.preview_item.pixmap()
+            return pm.width(), pm.height()
+        elif self.canvas.image_item and self.canvas.image_item.pixmap():
+            pm = self.canvas.image_item.pixmap()
+            return pm.width(), pm.height()
+        else:
+            return 512, 512
+
+    def get_subject_image_with_text(self) -> Optional[np.ndarray]:
+        import numpy as np
+        import cv2
+        rgba = self.image_processor.get_rgba_image(show_watermark=False)
+        text_items = [item for item in self.canvas.scene.items() if isinstance(item, InteractiveTextItem) and item.text.strip()]
+        
+        if rgba is None:
+            if not text_items:
+                return None
+            # No image, but we have text items! Create a transparent 512x512 canvas
+            h, w = 512, 512
+            rgba = np.zeros((h, w, 4), dtype=np.uint8)
+        else:
+            if not text_items:
+                return rgba
+            h, w = rgba.shape[:2]
+
+        from typing import Optional
+
+        # Convert BGRA (which rgba is) to RGBA so QImage(..., QImage.Format_RGBA8888) matches memory structure
+        rgba_rgba = cv2.cvtColor(rgba, cv2.COLOR_BGRA2RGBA)
+        qimg = QImage(rgba_rgba.data, w, h, 4 * w, QImage.Format_RGBA8888).copy()
+
+        painter = QPainter(qimg)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+
+        for item in text_items:
+            painter.save()
+
+            # Calculate local position on the image
+            pos = item.pos()
+            tx = pos.x() + w / 2.0
+            ty = pos.y() + h / 2.0
+
+            # Translate to the item's position on the image
+            painter.translate(tx, ty)
+
+            # Apply the item's scale
+            s = item.scale()
+            painter.scale(s, s)
+
+            # Paint the item in rendering mode
+            item.rendering_mode = True
+            item.paint(painter, None, None)
+            item.rendering_mode = False
+
+            painter.restore()
+
+        painter.end()
+
+        # Convert QImage back to RGBA numpy array
+        arr_rgba = np.frombuffer(qimg.constBits(), dtype=np.uint8).reshape((h, w, 4)).copy()
+        # Convert RGBA back to BGRA numpy array
+        arr = cv2.cvtColor(arr_rgba, cv2.COLOR_RGBA2BGRA)
+        return arr
+
     def on_preview_style_selected(self, style_id: str) -> None:
         """Generate styled image and display it in the canvas when a preview is clicked."""
         from PySide6.QtGui import QColor
@@ -414,13 +560,21 @@ class MainWindow(QMainWindow):
         self.canvas.set_bg_color(bg)
         self.bottom_bar.current_bg_color = bg
 
-        rgba = self.image_processor.get_rgba_image(show_watermark=False)
-        if rgba is None:
-            return
+        if style_id == "original":
+            self.bottom_bar.scale_btn.setEnabled(False)
+            self.bottom_bar.set_subject_scale(1.0)
+        else:
+            self.bottom_bar.scale_btn.setEnabled(True)
+            scale = self.style_subject_scales.get(style_id, 1.0)
+            self.bottom_bar.set_subject_scale(scale)
 
         if style_id == "original":
             self.canvas.clear_preview()
             return
+
+        rgba = self.image_processor.get_rgba_image(show_watermark=False)
+        if rgba is None:
+            rgba = np.zeros((1, 1, 4), dtype=np.uint8)
 
         import cv2
         from PySide6.QtGui import QImage, QPixmap
@@ -435,23 +589,25 @@ class MainWindow(QMainWindow):
             hex_color = f"#{r:02x}{g:02x}{b:02x}"
             doc_color = (r, g, b)
 
+        scale_mult = self.style_subject_scales.get(style_id, 1.0)
+
         styled_np = None
         if style_id in ["big_sur", "catalina", "classic", "ios", "android"]:
             engine = IconStyleEngine()
             engine.background_color = bg_tuple
-            styled_np = engine.apply_style(rgba, style_id)
+            styled_np = engine.apply_style(rgba, style_id, scale_multiplier=scale_mult)
         elif style_id == "folder_center":
             engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="center")
+            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="center", scale_multiplier=scale_mult)
         elif style_id == "folder_cover":
             engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="cover")
+            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="cover", scale_multiplier=scale_mult)
         elif style_id == "document_center":
             engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="center")
+            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="center", scale_multiplier=scale_mult)
         elif style_id == "document_cover":
             engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="cover")
+            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="cover", scale_multiplier=scale_mult)
 
         if styled_np is None:
             self.canvas.clear_preview()
@@ -466,7 +622,18 @@ class MainWindow(QMainWindow):
 
     def _run_async_preview(self):
         rgba = self.image_processor.get_rgba_image(show_watermark=False)
-        if rgba is None: return
+        text_items = [item for item in self.canvas.scene.items() if isinstance(item, InteractiveTextItem) and item.text.strip()]
+        
+        if rgba is None and not text_items:
+            # If no subject is available (no image and no text), hide the gallery
+            self.canvas.clear_preview()
+            if not self.gallery.isHidden() and self.image_processor.current_image is None:
+                self.gallery.hide()
+                self.setFixedSize(510, 555)
+            return
+
+        if rgba is None:
+            rgba = np.zeros((1, 1, 4), dtype=np.uint8)
 
         # Stop current worker if it's already running
         if self.preview_worker and self.preview_worker.isRunning():
@@ -481,7 +648,16 @@ class MainWindow(QMainWindow):
             qcolor = self.style_bg_colors.get(s_id, QColor(0, 0, 0, 0))
             bg_colors_dict[s_id] = (qcolor.red(), qcolor.green(), qcolor.blue(), qcolor.alpha())
 
-        self.preview_worker = PreviewWorker(rgba, bg_colors_dict)
+        text_items_data = [serialize_text_item(item) for item in text_items]
+        canvas_ref_size = self.get_canvas_ref_size()
+
+        self.preview_worker = PreviewWorker(
+            rgba_image=rgba,
+            bg_colors=bg_colors_dict,
+            subject_scales=self.style_subject_scales,
+            text_items_data=text_items_data,
+            canvas_ref_size=canvas_ref_size
+        )
         self.preview_worker.style_ready.connect(self.gallery.update_style_preview)
         self.preview_worker.start()
 
@@ -499,7 +675,7 @@ class MainWindow(QMainWindow):
             pixmap = self.image_processor.get_qpixmap()
             if pixmap:
                 self.canvas.add_image(pixmap)
-            self.resize(710, 555) # Expand width for gallery (510 + 200)
+            self.setFixedSize(710, 555) # Expand width for gallery (510 + 200)
             self.gallery.show() # Reveal gallery
             self.refresh_all()
         else:
@@ -552,16 +728,19 @@ class MainWindow(QMainWindow):
         self.refresh_all()
 
     def export_result(self, format_name: str) -> None:
-        if self.image_processor.current_image is None:
-            ModernMessageBox.show_warning(self, "Warning", "Please load and process an image first.")
+        rgba = self.image_processor.get_rgba_image(show_watermark=False)
+        text_items = [item for item in self.canvas.scene.items() if isinstance(item, InteractiveTextItem) and item.text.strip()]
+        
+        if rgba is None and not text_items:
+            ModernMessageBox.show_warning(self, "Warning", "Please load an image or add text first.")
             return
 
-        rgba = self.image_processor.get_rgba_image()
         selected_style = self.gallery.selected_style_id
 
         from PIL import Image
         from src.engine.processor import cv2
         from PySide6.QtGui import QColor
+        import numpy as np
 
         # Get customized background color and format it for different engines
         bg = self.style_bg_colors.get(selected_style, QColor(0, 0, 0, 0))
@@ -574,26 +753,39 @@ class MainWindow(QMainWindow):
             hex_color = f"#{r:02x}{g:02x}{b:02x}"
             doc_color = (r, g, b)
 
+        # Get style-specific scale
+        scale_mult = self.style_subject_scales.get(selected_style, 1.0)
+
+        subject_rgba = rgba if rgba is not None else np.zeros((1, 1, 4), dtype=np.uint8)
+
         styled_np = None
         if selected_style in ["big_sur", "catalina", "classic", "ios", "android"]:
             engine = IconStyleEngine()
             engine.background_color = bg_tuple
-            styled_np = engine.apply_style(rgba, selected_style)
+            styled_np = engine.apply_style(subject_rgba, selected_style, scale_multiplier=scale_mult)
         elif selected_style == "folder_center":
             engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="center")
+            styled_np = engine.apply_folder_style(subject_rgba, color=hex_color, layout="center", scale_multiplier=scale_mult)
         elif selected_style == "folder_cover":
             engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="cover")
+            styled_np = engine.apply_folder_style(subject_rgba, color=hex_color, layout="cover", scale_multiplier=scale_mult)
         elif selected_style == "document_center":
             engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="center")
+            styled_np = engine.apply_document_style(subject_rgba, color=doc_color, layout="center", scale_multiplier=scale_mult)
         elif selected_style == "document_cover":
             engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="cover")
+            styled_np = engine.apply_document_style(subject_rgba, color=doc_color, layout="cover", scale_multiplier=scale_mult)
 
         if styled_np is None:
-            styled_np = rgba
+            if rgba is not None:
+                styled_np = rgba.copy()
+            else:
+                styled_np = np.zeros((1024, 1024, 4), dtype=np.uint8)
+
+        if text_items:
+            text_items_data = [serialize_text_item(item) for item in text_items]
+            canvas_ref_size = self.get_canvas_ref_size()
+            styled_np = draw_text_on_np(styled_np, text_items_data, canvas_ref_size)
 
         styled_rgb = cv2.cvtColor(styled_np, cv2.COLOR_BGRA2RGBA)
         styled_pil = Image.fromarray(styled_rgb)
@@ -614,3 +806,27 @@ class MainWindow(QMainWindow):
             if dir_path:
                 if export_png_set(styled_pil, dir_path):
                     ModernMessageBox.show_info(self, "Success", "Exported PNG set")
+
+    def closeEvent(self, event) -> None:
+        """Gracefully stop all background threads and timers on close to prevent segmentation faults."""
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
+        if hasattr(self, 'preview_timer'):
+            self.preview_timer.stop()
+        if hasattr(self, 'canvas'):
+            if hasattr(self.canvas, 'zoom_timer'):
+                self.canvas.zoom_timer.stop()
+            if hasattr(self.canvas, 'cleanup'):
+                self.canvas.cleanup()
+
+        # Shutdown workers
+        for worker_name in ['bg_worker', 'inpaint_worker', 'preview_worker']:
+            worker = getattr(self, worker_name, None)
+            if worker and worker.isRunning():
+                worker.requestInterruption()
+                # Wait up to 1 second for the thread to exit cleanly, then terminate if it hangs
+                if not worker.wait(1000):
+                    worker.terminate()
+                    worker.wait()
+
+        event.accept()
