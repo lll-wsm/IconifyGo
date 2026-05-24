@@ -508,6 +508,7 @@ class BottomBar(QWidget):
         layout.addWidget(title)
         
         exports = [
+            ("Original Size PNG (.png)", "original_png"),
             ("macOS Icon (.icns)", ".icns"),
             ("PNG Image Set", "PNG")
         ]

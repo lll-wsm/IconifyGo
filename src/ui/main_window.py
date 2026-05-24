@@ -796,7 +796,20 @@ class MainWindow(QMainWindow):
                 bg_layer = Image.new("RGBA", styled_pil.size, (bg.red(), bg.green(), bg.blue(), bg.alpha()))
                 styled_pil = Image.alpha_composite(bg_layer, styled_pil)
         
-        if ".icns" in format_name:
+        if format_name == "original_png":
+            file_path, _ = QFileDialog.getSaveFileName(self, "Save PNG Image", "", "PNG Image (*.png)")
+            if file_path:
+                orig_img = self.image_processor.original_image
+                if orig_img is not None:
+                    h_orig, w_orig = orig_img.shape[:2]
+                    if styled_pil.size != (w_orig, h_orig):
+                        styled_pil = styled_pil.resize((w_orig, h_orig), Image.Resampling.LANCZOS)
+                try:
+                    styled_pil.save(file_path, "PNG")
+                    ModernMessageBox.show_info(self, "Success", "Exported successfully")
+                except Exception as e:
+                    ModernMessageBox.show_error(self, "Error", f"Failed to export: {str(e)}")
+        elif ".icns" in format_name:
             file_path, _ = QFileDialog.getSaveFileName(self, "Save ICNS Icon", "", "macOS Icon (*.icns)")
             if file_path:
                 if export_icns(styled_pil, file_path):
