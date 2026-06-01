@@ -510,6 +510,7 @@ class BottomBar(QWidget):
         exports = [
             ("Original Size PNG (.png)", "original_png"),
             ("macOS Icon (.icns)", ".icns"),
+            ("Windows Icon (.ico)", ".ico"),
             ("PNG Image Set", "PNG")
         ]
         for label, val in exports:

@@ -11,7 +11,7 @@ from src.engine.preview_worker import PreviewWorker
 from src.engine.icon_styles import IconStyleEngine
 from src.engine.folder_styles import FolderStyleEngine
 from src.engine.document_styles import DocumentStyleEngine
-from src.utils.export import export_icns, export_png_set
+from src.utils.export import export_icns, export_png_set, export_ico
 from src.utils.text_renderer import serialize_text_item, draw_text_on_np
 import numpy as np
 
@@ -814,11 +814,22 @@ class MainWindow(QMainWindow):
             if file_path:
                 if export_icns(styled_pil, file_path):
                     ModernMessageBox.show_info(self, "Success", "Exported successfully")
+                else:
+                    ModernMessageBox.show_error(self, "Error", "Failed to export ICNS icon")
+        elif ".ico" in format_name:
+            file_path, _ = QFileDialog.getSaveFileName(self, "Save ICO Icon", "", "Windows Icon (*.ico)")
+            if file_path:
+                if export_ico(styled_pil, file_path):
+                    ModernMessageBox.show_info(self, "Success", "Exported successfully")
+                else:
+                    ModernMessageBox.show_error(self, "Error", "Failed to export ICO icon")
         else:
             dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
             if dir_path:
                 if export_png_set(styled_pil, dir_path):
                     ModernMessageBox.show_info(self, "Success", "Exported PNG set")
+                else:
+                    ModernMessageBox.show_error(self, "Error", "Failed to export PNG set")
 
     def closeEvent(self, event) -> None:
         """Gracefully stop all background threads and timers on close to prevent segmentation faults."""

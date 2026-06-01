@@ -2,14 +2,9 @@ import sys
 import os
 import logging
 
-# Set up logging to a file in the user's home directory if bundled
-if getattr(sys, 'frozen', False):
-    log_file = os.path.join(os.path.expanduser("~"), "IconifyGo_debug.log")
-    logging.basicConfig(filename=log_file, level=logging.INFO, 
-                        format='%(asctime)s - %(levelname)s - %(message)s')
-    logging.info("Starting IconifyGo (Bundled)")
-else:
-    logging.basicConfig(level=logging.INFO)
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.info("Starting IconifyGo")
 
 # Robust path handling for both development and PyInstaller
 if getattr(sys, 'frozen', False):
