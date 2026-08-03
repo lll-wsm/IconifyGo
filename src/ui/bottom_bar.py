@@ -7,6 +7,7 @@ from PySide6.QtGui import QPainter, QColor, QFontDatabase, QFont
 from PySide6.QtCore import Qt, Signal, QByteArray, QPoint
 from typing import Optional
 from .icons import SVG_TEMPLATE, ICONS
+from src.utils.i18n import tr
 
 class TextSettingsWidget(QWidget):
     accepted = Signal(str, dict)
@@ -21,12 +22,12 @@ class TextSettingsWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        title = QLabel("键入文本或表情符号")
+        title = QLabel(tr("Type text or emoji"))
         title.setStyleSheet("font-weight: bold; font-size: 13px; color: #fff;")
         layout.addWidget(title)
 
         self.text_edit = QPlainTextEdit()
-        self.text_edit.setPlaceholderText("在此输入...")
+        self.text_edit.setPlaceholderText(tr("Enter here..."))
         self.text_edit.setFixedHeight(60)
         self.text_edit.setStyleSheet("""
             QPlainTextEdit { 
@@ -43,7 +44,7 @@ class TextSettingsWidget(QWidget):
         self.font_combo.setCurrentText("Arial")
         
         self.weight_combo = QComboBox()
-        self.weight_combo.addItems(["Regular", "Bold", "Italic"])
+        self.weight_combo.addItems([tr("Regular"), tr("Bold"), tr("Italic")])
         
         font_layout.addWidget(self.font_combo, 2)
         font_layout.addWidget(self.weight_combo, 1)
@@ -77,7 +78,7 @@ class TextSettingsWidget(QWidget):
 
         # Size
         size_layout = QHBoxLayout()
-        size_layout.addWidget(QLabel("大小"))
+        size_layout.addWidget(QLabel(tr("Size")))
         self.size_slider = QSlider(Qt.Horizontal)
         self.size_slider.setRange(10, 200)
         self.size_slider.setValue(40)
@@ -86,10 +87,10 @@ class TextSettingsWidget(QWidget):
 
         # Bottom Buttons
         btn_layout = QHBoxLayout()
-        cancel_btn = QPushButton("取消")
+        cancel_btn = QPushButton(tr("Cancel"))
         cancel_btn.clicked.connect(self.rejected.emit)
         
-        ok_btn = QPushButton("确认")
+        ok_btn = QPushButton(tr("Confirm"))
         ok_btn.setStyleSheet("background: #007aff; color: white; font-weight: bold;")
         ok_btn.clicked.connect(self.on_ok)
         
@@ -112,7 +113,7 @@ class TextSettingsWidget(QWidget):
             parent.block_close = True
             
         try:
-            color = QColorDialog.getColor(self.current_color, self, "选择颜色", QColorDialog.ShowAlphaChannel)
+            color = QColorDialog.getColor(self.current_color, self, tr("Select Color"), QColorDialog.ShowAlphaChannel)
             if color.isValid():
                 self.current_color = color
                 self.update_color_button()
@@ -205,6 +206,8 @@ class BottomBar(QWidget):
     sketch_clicked = Signal(int)
     wm_tool_changed = Signal(str)
     subject_scale_changed = Signal(float)
+    cancel_download_clicked = Signal()
+    language_clicked = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -228,8 +231,8 @@ class BottomBar(QWidget):
             }
         """)
         self.layout = QHBoxLayout(self.bar_widget)
-        self.layout.setContentsMargins(15, 0, 15, 0)
-        self.layout.setSpacing(15)
+        self.layout.setContentsMargins(12, 0, 12, 0)
+        self.layout.setSpacing(8)
         self.main_container.addWidget(self.bar_widget)
 
         # 2. Bottom Status Label & Progress
@@ -251,9 +254,28 @@ class BottomBar(QWidget):
             QProgressBar::chunk { background-color: #bf5af2; border-radius: 1px; }
         """)
         self.progress_bar.hide()
-        
+
+        # Cancel-download button (shown only during model download)
+        self.cancel_dl_btn = QPushButton("✕")
+        self.cancel_dl_btn.setFixedSize(20, 20)
+        self.cancel_dl_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_dl_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 69, 58, 0.3);
+                color: #ff453a;
+                border: 1px solid rgba(255, 69, 58, 0.4);
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: rgba(255, 69, 58, 0.5); }
+        """)
+        self.cancel_dl_btn.hide()
+        self.cancel_dl_btn.clicked.connect(self.cancel_download_clicked.emit)
+
         self.status_layout.addWidget(self.status_label)
         self.status_layout.addWidget(self.progress_bar, 1) # Progress bar takes remaining space
+        self.status_layout.addWidget(self.cancel_dl_btn)
         
         self.status_container.setObjectName("BottomStatusContainer")
         self.status_container.setStyleSheet("""
@@ -271,9 +293,9 @@ class BottomBar(QWidget):
         self.tool_layout.setSpacing(5)
         
         tools = [
-            ("pointer", "pointer", "Pointer Tool"),
-            ("brush", "brush", "Brush Tool"),
-            ("eraser", "eraser", "Eraser Tool")
+            ("pointer", "pointer", tr("Pointer Tool")),
+            ("brush", "brush", tr("Brush Tool")),
+            ("eraser", "eraser", tr("Eraser Tool"))
         ]
         
         for i, (icon_name, name, tooltip) in enumerate(tools):
@@ -297,12 +319,12 @@ class BottomBar(QWidget):
         self.brush_layout = QHBoxLayout()
         self.brush_layout.setSpacing(8)
         
-        self.shape_btn = SvgIconButton("shape", "Brush Shape")
+        self.shape_btn = SvgIconButton("shape", tr("Brush Shape"))
         self.shape_btn.setCheckable(False)
         self.shape_btn.clicked.connect(self.show_shape_menu)
         self.brush_layout.addWidget(self.shape_btn)
 
-        self.size_btn = SvgIconButton("size", "Brush Size")
+        self.size_btn = SvgIconButton("size", tr("Brush Size"))
         self.size_btn.setCheckable(False)
         self.size_btn.clicked.connect(self.show_size_menu)
         self.brush_layout.addWidget(self.size_btn)
@@ -310,37 +332,37 @@ class BottomBar(QWidget):
         self.layout.addLayout(self.brush_layout)
 
         # 3. Action Buttons (Iconified)
-        self.remove_bg_btn = SvgIconButton("sparkles", "Auto Remove Background")
+        self.remove_bg_btn = SvgIconButton("sparkles", tr("Auto Remove Background"))
         self.remove_bg_btn.setCheckable(False)
         self.remove_bg_btn.clicked.connect(self.show_model_menu)
         self.layout.addWidget(self.remove_bg_btn)
 
-        self.erase_btn = SvgIconButton("broom", "Erase Watermark")
+        self.erase_btn = SvgIconButton("broom", tr("Erase Watermark"))
         self.erase_btn.setCheckable(True)
         self.erase_btn.clicked.connect(self.show_inpaint_menu)
         self.layout.addWidget(self.erase_btn)
 
-        self.text_btn = SvgIconButton("text", "Add Text or Emoji")
+        self.text_btn = SvgIconButton("text", tr("Add Text or Emoji"))
         self.text_btn.setCheckable(False)
         self.text_btn.clicked.connect(self.show_text_menu)
         self.layout.addWidget(self.text_btn)
 
-        self.sketch_btn = SvgIconButton("pencil", "Convert to Sketch Style")
+        self.sketch_btn = SvgIconButton("pencil", tr("Convert to Sketch Style"))
         self.sketch_btn.setCheckable(False)
         self.sketch_btn.clicked.connect(self.show_sketch_menu)
         self.layout.addWidget(self.sketch_btn)
 
-        self.reset_btn = SvgIconButton("reset", "Reset to Original Image")
+        self.reset_btn = SvgIconButton("reset", tr("Reset to Original Image"))
         self.reset_btn.setCheckable(False)
         self.reset_btn.clicked.connect(self.reset_clicked.emit)
         self.layout.addWidget(self.reset_btn)
 
-        self.palette_btn = SvgIconButton("palette", "Background Color")
+        self.palette_btn = SvgIconButton("palette", tr("Background Color"))
         self.palette_btn.setCheckable(False)
         self.palette_btn.clicked.connect(self.show_bg_color_picker)
         self.layout.addWidget(self.palette_btn)
 
-        self.scale_btn = SvgIconButton("scale", "Adjust Subject Scale")
+        self.scale_btn = SvgIconButton("scale", tr("Adjust Subject Scale"))
         self.scale_btn.setCheckable(False)
         self.scale_btn.clicked.connect(self.show_scale_menu)
         self.scale_btn.setEnabled(False)
@@ -350,10 +372,16 @@ class BottomBar(QWidget):
         self.layout.addStretch()
 
         # 4. Export Button (Compact)
-        self.export_btn = SvgIconButton("export", "Export Result")
+        self.export_btn = SvgIconButton("export", tr("Export Result"))
         self.export_btn.setCheckable(False)
         self.export_btn.clicked.connect(self.show_export_menu)
         self.layout.addWidget(self.export_btn)
+
+        # 5. Language Button
+        self.lang_btn = SvgIconButton("language", tr("Language"))
+        self.lang_btn.setCheckable(False)
+        self.lang_btn.clicked.connect(self.show_language_menu)
+        self.layout.addWidget(self.lang_btn)
 
     def show_message(self, message: str, timeout: int = 3000):
         self.status_label.setText(message)
@@ -362,7 +390,24 @@ class BottomBar(QWidget):
             QTimer.singleShot(timeout, lambda: self.status_label.setText("") if self.status_label.text() == message else None)
 
     def set_progress_active(self, active: bool):
+        self.progress_bar.setRange(0, 0)  # reset to indeterminate mode
         self.progress_bar.setVisible(active)
+        if not active:
+            self.cancel_dl_btn.hide()
+
+    def set_download_progress(self, percent: int, message: str) -> None:
+        """Show determinate download progress with a status message."""
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(percent)
+        self.progress_bar.show()
+        self.cancel_dl_btn.show()
+        self.status_label.setText(message)
+
+    def set_processing_mode(self) -> None:
+        """Switch progress bar back to indeterminate mode for AI processing."""
+        if self.progress_bar.maximum() != 0:  # only if currently in determinate mode
+            self.progress_bar.setRange(0, 0)
+            self.cancel_dl_btn.hide()
 
     def show_model_menu(self):
         from .popover import ActionPopover
@@ -373,7 +418,7 @@ class BottomBar(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(8)
         
-        title = QLabel("选择抠图模型")
+        title = QLabel(tr("Select Matting Model"))
         title.setStyleSheet("font-weight: bold; font-size: 12px; color: #fff;")
         layout.addWidget(title)
         
@@ -422,7 +467,7 @@ class BottomBar(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(10)
         
-        title = QLabel("水印绘制与去除")
+        title = QLabel(tr("Watermark Draw and Remove"))
         title.setStyleSheet("font-weight: bold; font-size: 12px; color: #fff;")
         layout.addWidget(title)
         
@@ -430,10 +475,10 @@ class BottomBar(QWidget):
         tool_row = QHBoxLayout()
         tool_row.setSpacing(8)
         
-        wm_brush = SvgIconButton("wm_brush", "Watermark Brush (绘制遮罩)", content)
+        wm_brush = SvgIconButton("wm_brush", tr("Watermark Brush"), content)
         wm_brush.setCheckable(True)
         
-        wm_eraser = SvgIconButton("wm_eraser", "Watermark Eraser (擦除遮罩)", content)
+        wm_eraser = SvgIconButton("wm_eraser", tr("Watermark Eraser"), content)
         wm_eraser.setCheckable(True)
         
         main_win = self.window()
@@ -459,14 +504,14 @@ class BottomBar(QWidget):
         line.setStyleSheet("background-color: rgba(255, 255, 255, 15); border: none; min-height: 1px; max-height: 1px;")
         layout.addWidget(line)
         
-        strength_title = QLabel("传统算法去除 (渐进修复)")
+        strength_title = QLabel(tr("Traditional Algorithm (Progressive Inpainting)"))
         strength_title.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 150);")
         layout.addWidget(strength_title)
         
         strength_row = QHBoxLayout()
         strength_row.setSpacing(6)
         
-        strengths = [("Light", "light"), ("Medium", "medium"), ("Strong", "strong")]
+        strengths = [(tr("Light"), "light"), (tr("Medium"), "medium"), (tr("Strong"), "strong")]
         for label, val in strengths:
             btn = QPushButton(label)
             btn.clicked.connect(lambda checked, v=val: [self.erase_watermark_clicked.emit(v), popover.close()])
@@ -480,12 +525,12 @@ class BottomBar(QWidget):
         line2.setStyleSheet("background-color: rgba(255, 255, 255, 15); border: none; min-height: 1px; max-height: 1px;")
         layout.addWidget(line2)
         
-        ai_title = QLabel("AI 智能去水印 (首次需下载模型)")
+        ai_title = QLabel(tr("AI Intelligent Watermark Removal (first use requires model download)"))
         ai_title.setStyleSheet("font-size: 11px; color: rgba(255, 255, 255, 150);")
         layout.addWidget(ai_title)
         
         ai_row = QHBoxLayout()
-        ai_btn = QPushButton("AI 智能擦除")
+        ai_btn = QPushButton(tr("AI Intelligent Erase"))
         ai_btn.setStyleSheet("background: #007aff; color: white; font-weight: bold; padding: 4px 12px;")
         ai_btn.clicked.connect(lambda checked: [self.erase_watermark_clicked.emit("ai"), popover.close()])
         ai_row.addWidget(ai_btn)
@@ -503,15 +548,15 @@ class BottomBar(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(8)
         
-        title = QLabel("导出格式")
+        title = QLabel(tr("Export Format"))
         title.setStyleSheet("font-weight: bold; font-size: 12px; color: #fff;")
         layout.addWidget(title)
-        
+
         exports = [
-            ("Original Size PNG (.png)", "original_png"),
-            ("macOS Icon (.icns)", ".icns"),
-            ("Windows Icon (.ico)", ".ico"),
-            ("PNG Image Set", "PNG")
+            (tr("Original Size PNG (.png)"), "original_png"),
+            (tr("macOS Icon (.icns)"), ".icns"),
+            (tr("Windows Icon (.ico)"), ".ico"),
+            (tr("PNG Image Set"), "PNG")
         ]
         for label, val in exports:
             btn = QPushButton(label)
@@ -527,7 +572,7 @@ class BottomBar(QWidget):
         content = QWidget()
         layout = QHBoxLayout(content)
         layout.setSpacing(5)
-        for s in ["Circle", "Square", "Ellipse"]:
+        for s in [tr("Circle"), tr("Square"), tr("Ellipse")]:
             btn = QPushButton(s)
             btn.clicked.connect(lambda checked, shape=s: [self.brush_shape_changed.emit(shape), popover.close()])
             layout.addWidget(btn)
@@ -544,7 +589,7 @@ class BottomBar(QWidget):
         slider.setRange(1, 100)
         slider.setValue(20) # Default
         slider.valueChanged.connect(self.brush_size_changed.emit)
-        layout.addWidget(QLabel("Brush Size"))
+        layout.addWidget(QLabel(tr("Brush Size")))
         layout.addWidget(slider)
         popover.set_widget(content)
         popover.show_above(self.size_btn)
@@ -563,11 +608,11 @@ class BottomBar(QWidget):
         slider.setRange(20, 200)
         slider.setValue(int(self.current_subject_scale * 100))
         
-        label = QLabel(f"Subject Scale: {slider.value()}%")
+        label = QLabel(f"{tr('Subject Scale')}: {slider.value()}%")
         label.setStyleSheet("color: white; font-size: 11px;")
-        
+
         def on_value_changed(val):
-            label.setText(f"Subject Scale: {val}%")
+            label.setText(f"{tr('Subject Scale')}: {val}%")
             self.current_subject_scale = val / 100.0
             self.subject_scale_changed.emit(self.current_subject_scale)
             
@@ -593,7 +638,7 @@ class BottomBar(QWidget):
         color = QColorDialog.getColor(
             initial_color,
             self,
-            "选择背景颜色",
+            tr("Select Background Color"),
             QColorDialog.ShowAlphaChannel
         )
         if color.isValid():
@@ -608,15 +653,15 @@ class BottomBar(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(8)
         
-        title = QLabel("素描风格转换")
+        title = QLabel(tr("Sketch Style Conversion"))
         title.setStyleSheet("font-weight: bold; font-size: 12px; color: #fff;")
         layout.addWidget(title)
-        
+
         options = [
-            ("Fine Detail (精细)", 9),
-            ("Classic Sketch (经典)", 21),
-            ("Bold Sketch (浓重)", 51),
-            ("Restore Original (恢复原图)", 0)
+            (tr("Fine Detail"), 9),
+            (tr("Classic Sketch"), 21),
+            (tr("Bold Sketch"), 51),
+            (tr("Restore Original"), 0)
         ]
         
         for name, kernel_size in options:
@@ -626,3 +671,24 @@ class BottomBar(QWidget):
             
         popover.set_widget(content)
         popover.show_above(self.sketch_btn)
+
+    def show_language_menu(self):
+        from .popover import ActionPopover
+        from src.utils.i18n import get_language, save_language
+        popover = ActionPopover(self)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(8)
+
+        for lang_code, lang_label in [("zh", tr("Simplified Chinese")), ("en", tr("English"))]:
+            btn = QPushButton(lang_label)
+            btn.setCheckable(True)
+            if lang_code == get_language():
+                btn.setChecked(True)
+            btn.clicked.connect(lambda checked, lc=lang_code: [save_language(lc), popover.close(), self.language_clicked.emit()])
+            layout.addWidget(btn)
+
+        popover.set_widget(content)
+        popover.show_above(self.lang_btn)

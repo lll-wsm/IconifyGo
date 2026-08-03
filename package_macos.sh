@@ -12,18 +12,28 @@ MAIN_SCRIPT="$PROJECT_ROOT/src/main.py"
 
 # 2. Cleanup previous builds
 echo "🧹 Cleaning up previous builds..."
-rm -rf "$DIST_DIR" "$BUILD_DIR" *.spec
+rm -rf "$DIST_DIR" "$BUILD_DIR"
+setopt localoptions NULL_GLOB
+rm -f *.spec
 
 # 3. Ensure environment is ready
-if [[ -d "venv" ]]; then
-    echo "🐍 Activating virtual environment..."
-    source venv/bin/activate
+PYTHON=""
+for venv_dir in ".venv" "venv"; do
+    if [[ -f "$venv_dir/bin/python" ]]; then
+        echo "🐍 Using virtual environment ($venv_dir)..."
+        PYTHON="$PROJECT_ROOT/$venv_dir/bin/python"
+        break
+    fi
+done
+if [[ -z "$PYTHON" ]]; then
+    echo "❌ No virtual environment found. Please create one first."
+    exit 1
 fi
 
 # Check if pyinstaller is installed
-if ! command -v pyinstaller &> /dev/null; then
+if ! "$PYTHON" -m PyInstaller --version &> /dev/null; then
     echo "❌ PyInstaller not found. Installing..."
-    pip install pyinstaller
+    "$PYTHON" -m pip install pyinstaller
 fi
 
 # 4. Build the application
@@ -31,7 +41,7 @@ echo "📦 Running PyInstaller..."
 
 # Note: on macOS, add-data uses colon separator (source:dest)
 # We add src to ensures all packages are found
-pyinstaller --noconfirm --windowed \
+"$PYTHON" -m PyInstaller --noconfirm --windowed --clean \
     --name "IconifyGo" \
     --icon "$ICON_PATH" \
     --add-data "res:res" \

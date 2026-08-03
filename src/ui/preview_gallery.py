@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt, Signal, QSize
+from src.utils.i18n import tr
 from typing import Optional, List
 
 class PreviewItem(QFrame):
@@ -77,12 +78,12 @@ class PreviewGallery(QScrollArea):
     def setup_previews(self):
         # App Icons
         styles = [
-            ("No Background", "original"),
+            (tr("No Background"), "original"),
             ("macOS Big Sur", "big_sur"),
             ("macOS Catalina", "catalina"),
-            ("macOS Classic", "classic"),
-            ("iOS App Icon", "ios"),
-            ("Android Icon", "android")
+            (tr("macOS Classic"), "classic"),
+            (tr("iOS App Icon"), "ios"),
+            (tr("Android Icon"), "android")
         ]
         for label, style_id in styles:
             item = PreviewItem(label, style_id)
@@ -92,8 +93,8 @@ class PreviewGallery(QScrollArea):
             
         # Folders
         folders = [
-            ("Folder (Center)", "folder_center"),
-            ("Folder (Cover)", "folder_cover")
+            (tr("Folder (Center)"), "folder_center"),
+            (tr("Folder (Cover)"), "folder_cover")
         ]
         for label, style_id in folders:
             item = PreviewItem(label, style_id)
@@ -103,8 +104,8 @@ class PreviewGallery(QScrollArea):
 
         # Documents
         documents = [
-            ("Document (Center)", "document_center"),
-            ("Document (Cover)", "document_cover")
+            (tr("Document (Center)"), "document_center"),
+            (tr("Document (Cover)"), "document_cover")
         ]
         for label, style_id in documents:
             item = PreviewItem(label, style_id)

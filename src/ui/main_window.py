@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QMessageBox, QPushButton, QDialog, QLabel
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QFileDialog, QMessageBox, QPushButton, QDialog, QLabel, QApplication
 from PySide6.QtCore import QTimer, Qt, QPoint
 from PySide6.QtGui import QImage, QPainter
 from src.ui.bottom_bar import BottomBar
@@ -14,9 +14,12 @@ from src.engine.document_styles import DocumentStyleEngine
 from src.utils.export import export_icns, export_png_set, export_ico
 from src.utils.text_renderer import serialize_text_item, draw_text_on_np
 import numpy as np
+import time
+from src.utils.i18n import tr
 
 class ModernMessageBox(QDialog):
-    def __init__(self, parent=None, title="Notification", text="", is_error=False, is_warning=False):
+    def __init__(self, parent=None, title="Notification", text="", is_error=False, is_warning=False,
+                 confirm_text="OK", cancel_text=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
@@ -77,9 +80,29 @@ class ModernMessageBox(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         btn_layout.addStretch()
-        
-        # OK Button
-        self.ok_btn = QPushButton("OK")
+
+        # Cancel button (optional, shown when cancel_text is provided)
+        if cancel_text:
+            self.cancel_btn = QPushButton(cancel_text)
+            self.cancel_btn.setStyleSheet("""
+                QPushButton {
+                    background: rgba(255, 255, 255, 15);
+                    color: #e5e5e7;
+                    border: 1px solid rgba(255, 255, 255, 20);
+                    border-radius: 6px;
+                    padding: 6px 20px;
+                    font-weight: bold;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background: rgba(255, 255, 255, 30);
+                }
+            """)
+            self.cancel_btn.clicked.connect(self.reject)
+            btn_layout.addWidget(self.cancel_btn)
+
+        # OK / Confirm Button
+        self.ok_btn = QPushButton(confirm_text)
         self.ok_btn.setStyleSheet("""
             QPushButton {
                 background: #bf5af2;
@@ -128,6 +151,12 @@ class ModernMessageBox(QDialog):
         box = ModernMessageBox(parent, title, text, is_error=True, is_warning=False)
         box.exec()
 
+    @staticmethod
+    def show_question(parent, title, text, confirm_text="OK", cancel_text=None):
+        """Returns True if user clicked confirm, False otherwise."""
+        box = ModernMessageBox(parent, title, text, confirm_text=confirm_text, cancel_text=cancel_text)
+        return box.exec() == QDialog.Accepted
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -163,6 +192,8 @@ class MainWindow(QMainWindow):
         self.inpaint_strength = "medium"
         self.style_bg_colors = {}
         self.style_subject_scales = {}
+        self._dl_last_update = None
+        self._dl_last_speed = 0.0
 
         # Timer for throttled refresh of the MAIN CANVAS ONLY (for smooth drawing)
         self.refresh_timer = QTimer()
@@ -284,6 +315,8 @@ class MainWindow(QMainWindow):
         self.bottom_bar.brush_shape_changed.connect(self.canvas.set_brush_shape)
         self.bottom_bar.export_clicked.connect(self.export_result)
         self.bottom_bar.erase_watermark_clicked.connect(self.erase_watermark)
+        self.bottom_bar.cancel_download_clicked.connect(self.cancel_download)
+        self.bottom_bar.language_clicked.connect(self.on_language_changed)
         self.bottom_bar.reset_clicked.connect(self.reset_image)
         self.bottom_bar.text_added.connect(self.on_text_added)
         self.bottom_bar.bg_color_changed.connect(self.on_bg_color_changed)
@@ -379,10 +412,10 @@ class MainWindow(QMainWindow):
             return
         
         if self.image_processor.reset_to_original():
-            self.bottom_bar.show_message("Reset to original image", 3000)
+            self.bottom_bar.show_message(tr("Reset to original image"), 3000)
             self.refresh_all()
         else:
-            ModernMessageBox.show_warning(self, "Warning", "No original image to restore.")
+            ModernMessageBox.show_warning(self, tr("Warning"), tr("No original image to restore."))
 
     def erase_watermark(self, strength: str) -> None:
         """Trigger async inpainting on the current image using the watermark mask."""
@@ -395,22 +428,91 @@ class MainWindow(QMainWindow):
         if params is None:
             return
 
+        # Pre-check: if AI mode and model not downloaded, confirm with user
+        if strength == "ai" and not InpaintWorker.is_model_available():
+            confirmed = ModernMessageBox.show_question(
+                self, tr("Download AI Model"),
+                tr("First use of AI smart erasure requires downloading a model (~200 MB).\nThe download will be cached locally, no repeat download needed later.\n\nStart download?"),
+                confirm_text=tr("Confirm"), cancel_text=tr("Cancel")
+            )
+            if not confirmed:
+                return
+            # Initialize download speed tracking
+            self._dl_last_update = None
+            self._dl_last_speed = 0.0
+
         self.bottom_bar.erase_btn.setEnabled(False)
-        self.bottom_bar.show_message("Removing watermark...", 0)  # Use 0 timeout to prevent auto-clear
+        self.bottom_bar.show_message(tr("Removing watermark..."), 0)  # Use 0 timeout to prevent auto-clear
         self.bottom_bar.set_progress_active(True)
 
         self.inpaint_worker = InpaintWorker(params[0], params[1], strength=self.inpaint_strength)
-        self.inpaint_worker.progress.connect(lambda msg: self.bottom_bar.show_message(msg, 0))
+        self.inpaint_worker.progress.connect(self.on_inpaint_progress)
+        self.inpaint_worker.download_progress.connect(self.on_download_progress)
+        self.inpaint_worker.cancelled.connect(self.on_inpaint_cancelled)
         self.inpaint_worker.finished.connect(self.on_inpaint_done)
         self.inpaint_worker.error.connect(self.on_inpaint_error)
         self.inpaint_worker.start()
 
+    def on_inpaint_progress(self, msg: str) -> None:
+        """Handle text progress messages. Switch from download mode to processing mode."""
+        self.bottom_bar.set_processing_mode()
+        self.bottom_bar.show_message(msg, 0)
+
+    def on_download_progress(self, downloaded: int, total: int) -> None:
+        """Handle numeric download progress with speed calculation."""
+        now = time.time()
+        if self._dl_last_update is None:
+            self._dl_last_update = (now, downloaded)
+        else:
+            prev_time, prev_bytes = self._dl_last_update
+            elapsed = now - prev_time
+            if elapsed >= 0.5:  # update speed every 0.5s
+                speed = (downloaded - prev_bytes) / elapsed / (1024 * 1024)
+                self._dl_last_speed = speed
+                self._dl_last_update = (now, downloaded)
+
+        percent = int(downloaded * 100 / total) if total > 0 else 0
+        dl_mb = downloaded / (1024 * 1024)
+        total_mb = total / (1024 * 1024) if total > 0 else 0
+        speed = self._dl_last_speed
+        if speed > 0:
+            msg = f"{tr('Downloading model')} {percent}%  ·  {speed:.1f} MB/s  ·  {dl_mb:.0f}/{total_mb:.0f} MB"
+        else:
+            msg = f"{tr('Downloading model')} {percent}%  ·  {dl_mb:.0f}/{total_mb:.0f} MB"
+        self.bottom_bar.set_download_progress(percent, msg)
+
+    def on_inpaint_cancelled(self) -> None:
+        """Handle user-initiated download cancellation."""
+        self._dl_last_update = None
+        self.bottom_bar.erase_btn.setEnabled(True)
+        self.bottom_bar.set_progress_active(False)
+        self.bottom_bar.show_message(tr("Download cancelled, you can try again"), 3000)
+
+    def cancel_download(self) -> None:
+        """Forward cancel request to the inpaint worker."""
+        if self.inpaint_worker and self.inpaint_worker.isRunning():
+            self.inpaint_worker.cancel_download()
+
+    def on_language_changed(self) -> None:
+        """Save language preference and restart the app to apply."""
+        ModernMessageBox.show_info(self, tr("Language"), tr("Language changed. The app will restart."))
+        import subprocess, sys, os
+        if getattr(sys, 'frozen', False):
+            # PyInstaller bundle: relaunch the .app
+            app_path = os.path.dirname(os.path.dirname(sys.executable))
+            subprocess.Popen(['open', '-n', app_path])
+        else:
+            # Dev mode: re-run with the same Python
+            subprocess.Popen([sys.executable] + sys.argv)
+        QApplication.quit()
+
     def on_inpaint_done(self, result_image) -> None:
         """Handle successful inpaint result."""
+        self._dl_last_update = None
         self.image_processor.apply_inpaint_result(result_image)
         self.refresh_all()
         self.bottom_bar.erase_btn.setEnabled(True)
-        self.bottom_bar.show_message("Watermark removed successfully", 3000)
+        self.bottom_bar.show_message(tr("Watermark removed successfully"), 3000)
         self.bottom_bar.set_progress_active(False)
         # Reset tool to pointer and mode to bg on successful completion
         self.set_active_tool("pointer")
@@ -420,7 +522,8 @@ class MainWindow(QMainWindow):
 
     def on_inpaint_error(self, error_msg) -> None:
         """Handle inpaint failure."""
-        ModernMessageBox.show_error(self, "Error", f"Watermark removal failed: {error_msg}")
+        self._dl_last_update = None
+        ModernMessageBox.show_error(self, tr("Error"), f"{tr('Watermark removal failed')}: {error_msg}")
         self.bottom_bar.erase_btn.setEnabled(True)
         self.bottom_bar.set_progress_active(False)
 
@@ -663,7 +766,7 @@ class MainWindow(QMainWindow):
 
     def open_file(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.tiff *.webp)"
+            self, tr("Open Image"), "", "Images (*.png *.jpg *.jpeg *.bmp *.tiff *.webp *.icns)"
         )
         if file_path:
             self.open_file_from_path(file_path)
@@ -679,17 +782,17 @@ class MainWindow(QMainWindow):
             self.gallery.show() # Reveal gallery
             self.refresh_all()
         else:
-            ModernMessageBox.show_error(self, "Error", f"Could not load image: {file_path}")
+            ModernMessageBox.show_error(self, tr("Error"), f"{tr('Could not load image')}: {file_path}")
 
     def remove_background(self, model_name: str) -> None:
         self.selected_model = model_name
         self.canvas.set_mode('bg')
         if self.image_processor.current_image is None:
-            ModernMessageBox.show_warning(self, "Warning", "Please load an image first.")
+            ModernMessageBox.show_warning(self, tr("Warning"), tr("Please load an image first."))
             return
 
         self.bottom_bar.remove_bg_btn.setEnabled(False)
-        self.bottom_bar.show_message("Removing background...")
+        self.bottom_bar.show_message(tr("Removing background..."))
         self.bottom_bar.set_progress_active(True)
 
         self.bg_worker = RembgWorker(self.image_processor.current_image, model_name=self.selected_model)
@@ -701,30 +804,30 @@ class MainWindow(QMainWindow):
         self.image_processor.apply_bg_removed_mask(result_image)
         self.refresh_all()
         self.bottom_bar.remove_bg_btn.setEnabled(True)
-        self.bottom_bar.show_message("Background removed successfully", 3000)
+        self.bottom_bar.show_message(tr("Background removed successfully"), 3000)
         self.bottom_bar.set_progress_active(False)
 
     def on_bg_error(self, error_msg) -> None:
-        ModernMessageBox.show_error(self, "Error", f"Background removal failed: {error_msg}")
+        ModernMessageBox.show_error(self, tr("Error"), f"{tr('Background removal failed')}: {error_msg}")
         self.bottom_bar.remove_bg_btn.setEnabled(True)
         self.bottom_bar.set_progress_active(False)
 
     def apply_sketch(self, kernel_size: int) -> None:
         """Applies pencil sketch filter with specified kernel size to the current image."""
         if self.image_processor.current_image is None:
-            ModernMessageBox.show_warning(self, "Warning", "Please load an image first.")
+            ModernMessageBox.show_warning(self, tr("Warning"), tr("Please load an image first."))
             return
 
         if kernel_size == 0:
             if self.image_processor.restore_pre_sketch():
-                self.bottom_bar.show_message("Restored original image", 3000)
+                self.bottom_bar.show_message(tr("Restored original image"), 3000)
                 self.refresh_all()
             else:
-                self.bottom_bar.show_message("Already at original image", 3000)
+                self.bottom_bar.show_message(tr("Already at original image"), 3000)
             return
 
         self.image_processor.apply_sketch_filter(kernel_size)
-        self.bottom_bar.show_message("Converted to sketch style", 3000)
+        self.bottom_bar.show_message(tr("Converted to sketch style"), 3000)
         self.refresh_all()
 
     def export_result(self, format_name: str) -> None:
@@ -732,7 +835,7 @@ class MainWindow(QMainWindow):
         text_items = [item for item in self.canvas.scene.items() if isinstance(item, InteractiveTextItem) and item.text.strip()]
         
         if rgba is None and not text_items:
-            ModernMessageBox.show_warning(self, "Warning", "Please load an image or add text first.")
+            ModernMessageBox.show_warning(self, tr("Warning"), tr("Please load an image or add text first."))
             return
 
         selected_style = self.gallery.selected_style_id
@@ -797,7 +900,7 @@ class MainWindow(QMainWindow):
                 styled_pil = Image.alpha_composite(bg_layer, styled_pil)
         
         if format_name == "original_png":
-            file_path, _ = QFileDialog.getSaveFileName(self, "Save PNG Image", "", "PNG Image (*.png)")
+            file_path, _ = QFileDialog.getSaveFileName(self, tr("Save PNG Image"), "", "PNG Image (*.png)")
             if file_path:
                 orig_img = self.image_processor.original_image
                 if orig_img is not None:
@@ -806,30 +909,30 @@ class MainWindow(QMainWindow):
                         styled_pil = styled_pil.resize((w_orig, h_orig), Image.Resampling.LANCZOS)
                 try:
                     styled_pil.save(file_path, "PNG")
-                    ModernMessageBox.show_info(self, "Success", "Exported successfully")
+                    ModernMessageBox.show_info(self, tr("Success"), tr("Exported successfully"))
                 except Exception as e:
-                    ModernMessageBox.show_error(self, "Error", f"Failed to export: {str(e)}")
+                    ModernMessageBox.show_error(self, tr("Error"), f"{tr('Failed to export')}: {str(e)}")
         elif ".icns" in format_name:
-            file_path, _ = QFileDialog.getSaveFileName(self, "Save ICNS Icon", "", "macOS Icon (*.icns)")
+            file_path, _ = QFileDialog.getSaveFileName(self, tr("Save ICNS Icon"), "", "macOS Icon (*.icns)")
             if file_path:
                 if export_icns(styled_pil, file_path):
-                    ModernMessageBox.show_info(self, "Success", "Exported successfully")
+                    ModernMessageBox.show_info(self, tr("Success"), tr("Exported successfully"))
                 else:
-                    ModernMessageBox.show_error(self, "Error", "Failed to export ICNS icon")
+                    ModernMessageBox.show_error(self, tr("Error"), tr("Failed to export ICNS icon"))
         elif ".ico" in format_name:
-            file_path, _ = QFileDialog.getSaveFileName(self, "Save ICO Icon", "", "Windows Icon (*.ico)")
+            file_path, _ = QFileDialog.getSaveFileName(self, tr("Save ICO Icon"), "", "Windows Icon (*.ico)")
             if file_path:
                 if export_ico(styled_pil, file_path):
-                    ModernMessageBox.show_info(self, "Success", "Exported successfully")
+                    ModernMessageBox.show_info(self, tr("Success"), tr("Exported successfully"))
                 else:
-                    ModernMessageBox.show_error(self, "Error", "Failed to export ICO icon")
+                    ModernMessageBox.show_error(self, tr("Error"), tr("Failed to export ICO icon"))
         else:
-            dir_path = QFileDialog.getExistingDirectory(self, "Select Output Directory")
+            dir_path = QFileDialog.getExistingDirectory(self, tr("Select Output Directory"))
             if dir_path:
                 if export_png_set(styled_pil, dir_path):
-                    ModernMessageBox.show_info(self, "Success", "Exported PNG set")
+                    ModernMessageBox.show_info(self, tr("Success"), tr("Exported PNG set"))
                 else:
-                    ModernMessageBox.show_error(self, "Error", "Failed to export PNG set")
+                    ModernMessageBox.show_error(self, tr("Error"), tr("Failed to export PNG set"))
 
     def closeEvent(self, event) -> None:
         """Gracefully stop all background threads and timers on close to prevent segmentation faults."""

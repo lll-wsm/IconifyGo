@@ -1,8 +1,12 @@
 import cv2
 import numpy as np
 import os
+import time
+import threading
 import urllib.request
-from PySide6.QtCore import QThread, Signal, QStandardPaths
+from urllib.error import HTTPError
+from src.utils.i18n import tr
+from PySide6.QtCore import QThread, Signal
 import onnxruntime as ort
 
 
@@ -15,15 +19,25 @@ class InpaintWorker(QThread):
     Signals:
         finished(np.ndarray): Emitted with the inpainted image on success.
         error(str): Emitted with an error message on failure.
-        progress(str): Emitted with progress messages (e.g. download progress).
+        progress(str): Emitted with text progress messages (e.g. "Loading AI model...").
+        download_progress(int, int): Emitted with (downloaded_bytes, total_bytes) during model download.
+        cancelled(): Emitted when the user cancels a model download.
     """
 
     finished = Signal(np.ndarray)
     error = Signal(str)
     progress = Signal(str)
+    download_progress = Signal(int, int)
+    cancelled = Signal()
 
     # Cached ONNX Runtime InferenceSession
     _session = None
+
+    # Download mirrors for the LaMa ONNX model (HuggingFace + China mirror fallback)
+    MIRRORS = [
+        "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
+        "https://hf-mirror.com/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
+    ]
 
     # Dynamic configurations for progressive peeling based on strength
     CONFIGS = {
@@ -55,6 +69,11 @@ class InpaintWorker(QThread):
         self.image = image
         self.watermark_mask = watermark_mask
         self.strength = strength if (strength in self.CONFIGS or strength == "ai") else "medium"
+        self._cancel_event = threading.Event()
+
+    def cancel_download(self):
+        """Called from the UI thread to cancel an in-progress model download."""
+        self._cancel_event.set()
 
     def run(self):
         try:
@@ -62,13 +81,17 @@ class InpaintWorker(QThread):
                 raise ValueError("No image provided to InpaintWorker")
             if self.watermark_mask is None:
                 raise ValueError("No watermark mask provided to InpaintWorker")
+            if self.isInterruptionRequested():
+                return
 
             result = self._perform_inpaint(
                 self.image, self.watermark_mask, self.strength, progress_cb=self.progress.emit
             )
-            self.finished.emit(result)
+            if not self.isInterruptionRequested() and not self._cancel_event.is_set():
+                self.finished.emit(result)
         except Exception as e:
-            self.error.emit(str(e))
+            if not self.isInterruptionRequested() and not self._cancel_event.is_set():
+                self.error.emit(str(e))
 
     @classmethod
     def get_model_path(cls) -> str:
@@ -78,40 +101,113 @@ class InpaintWorker(QThread):
         return os.path.join(model_dir, "lama_fp32.onnx")
 
     @classmethod
-    def download_model(cls, save_path: str, progress_cb=None):
-        """Downloads the LaMa ONNX model from Hugging Face with progress reporting."""
-        url = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx"
-        if progress_cb:
-            progress_cb("Downloading AI model (0%)...")
-        
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response, open(save_path, 'wb') as out_file:
-                total_size = int(response.info().get('Content-Length', 0))
-                block_size = 1024 * 1024  # 1MB chunks
-                downloaded = 0
-                
-                while True:
-                    buffer = response.read(block_size)
-                    if not buffer:
-                        break
-                    downloaded += len(buffer)
-                    out_file.write(buffer)
-                    if total_size > 0:
-                        percent = (downloaded / total_size) * 100
-                        if progress_cb:
-                            progress_cb(f"Downloading AI model ({percent:.1f}%)...")
-        except Exception as e:
-            # Delete incomplete file to prevent corruption on next run
-            if os.path.exists(save_path):
-                try:
-                    os.remove(save_path)
-                except Exception:
-                    pass
-            raise RuntimeError(f"Failed to download AI model: {e}")
+    def is_model_available(cls) -> bool:
+        """Check if the LaMa model is already downloaded and non-trivial in size."""
+        path = cls.get_model_path()
+        return os.path.exists(path) and os.path.getsize(path) > 1_000_000
 
-    @classmethod
-    def _perform_inpaint(cls, image: np.ndarray, watermark_mask: np.ndarray, strength: str, progress_cb=None) -> np.ndarray:
+    def _download_model(self, save_path: str) -> bool:
+        """Downloads the LaMa ONNX model with resume, retry, mirror fallback, and cancel support.
+
+        Returns True on success, False if cancelled by the user.
+        Raises RuntimeError if all mirrors and retries are exhausted.
+        """
+        tmp_path = save_path + ".part"
+        block_size = 256 * 1024  # 256KB chunks for fine-grained cancel responsiveness
+
+        for mirror_idx, url in enumerate(self.MIRRORS):
+            max_retries = 3
+            for attempt in range(max_retries):
+                if self._cancel_event.is_set():
+                    self.cancelled.emit()
+                    return False
+
+                try:
+                    resume_pos = os.path.getsize(tmp_path) if os.path.exists(tmp_path) else 0
+                    headers = {'User-Agent': 'Mozilla/5.0'}
+                    if resume_pos > 0:
+                        headers['Range'] = f'bytes={resume_pos}-'
+
+                    req = urllib.request.Request(url, headers=headers)
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        status = resp.status
+                        if status == 200:
+                            # Server ignored Range header or fresh download
+                            resume_pos = 0
+                            mode = 'wb'
+                        elif status == 206:
+                            # Partial content - resume from where we left off
+                            mode = 'ab'
+                        else:
+                            raise RuntimeError(f"Unexpected HTTP status: {status}")
+
+                        content_length = int(resp.info().get('Content-Length', 0))
+                        total = resume_pos + content_length
+
+                        with open(tmp_path, mode) as f:
+                            downloaded = resume_pos
+                            while True:
+                                if self._cancel_event.is_set():
+                                    self.cancelled.emit()
+                                    return False
+                                chunk = resp.read(block_size)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if total > 0:
+                                    self.download_progress.emit(downloaded, total)
+
+                    # Verify download completion
+                    actual_size = os.path.getsize(tmp_path)
+                    if total > 0 and actual_size >= total:
+                        os.rename(tmp_path, save_path)
+                        return True
+                    elif total == 0 and actual_size > 0:
+                        os.rename(tmp_path, save_path)
+                        return True
+
+                except HTTPError as e:
+                    if self._cancel_event.is_set():
+                        self.cancelled.emit()
+                        return False
+                    if e.code == 416 and os.path.exists(tmp_path):
+                        # .part file is larger than remote - delete and retry from scratch
+                        os.remove(tmp_path)
+                        continue
+                    # Other HTTP errors fall through to retry logic
+                    if attempt < max_retries - 1:
+                        wait_secs = 2 ** attempt
+                        for _ in range(wait_secs * 10):
+                            if self._cancel_event.is_set():
+                                self.cancelled.emit()
+                                return False
+                            time.sleep(0.1)
+                        continue
+                    if mirror_idx < len(self.MIRRORS) - 1:
+                        break
+                    raise RuntimeError(f"Failed to download AI model from all mirrors: {e}")
+                except Exception as e:
+                    if self._cancel_event.is_set():
+                        self.cancelled.emit()
+                        return False
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 1s, 2s (interruptible sleep)
+                        wait_secs = 2 ** attempt
+                        for _ in range(wait_secs * 10):
+                            if self._cancel_event.is_set():
+                                self.cancelled.emit()
+                                return False
+                            time.sleep(0.1)
+                        continue
+                    # Last retry on this mirror failed — try next mirror
+                    if mirror_idx < len(self.MIRRORS) - 1:
+                        break
+                    raise RuntimeError(f"Failed to download AI model from all mirrors: {e}")
+
+        raise RuntimeError("Failed to download AI model: all mirrors exhausted")
+
+    def _perform_inpaint(self, image: np.ndarray, watermark_mask: np.ndarray, strength: str, progress_cb=None) -> np.ndarray:
         """Core inpainting logic using progressive peeling or AI, and boundary feathering.
 
         Args:
@@ -133,24 +229,29 @@ class InpaintWorker(QThread):
             alpha_channel = None
 
         if strength == "ai":
-            model_path = cls.get_model_path()
-            if not os.path.exists(model_path):
-                cls.download_model(model_path, progress_cb)
-                
-            if cls._session is None:
+            model_path = InpaintWorker.get_model_path()
+            if not os.path.exists(model_path) or os.path.getsize(model_path) < 1_000_000:
                 if progress_cb:
-                    progress_cb("Loading AI model into memory...")
+                    progress_cb(tr("Downloading AI model..."))
+                success = self._download_model(model_path)
+                if not success:
+                    # Cancelled by user - return original image unchanged
+                    return image.copy()
+
+            if InpaintWorker._session is None:
+                if progress_cb:
+                    progress_cb(tr("Loading AI model into memory..."))
                 # CoreML is preferred on macOS; falls back to CPU
                 providers = ['CoreMLExecutionProvider', 'CPUExecutionProvider']
-                cls._session = ort.InferenceSession(model_path, providers=providers)
-                
+                InpaintWorker._session = ort.InferenceSession(model_path, providers=providers)
+
             if progress_cb:
-                progress_cb("AI watermark removal in progress...")
-                
-            output_bgr = cls._run_lama_ai(bgr, watermark_mask, cls._session)
+                progress_cb(tr("AI watermark removal in progress..."))
+
+            output_bgr = InpaintWorker._run_lama_ai(bgr, watermark_mask, InpaintWorker._session)
         else:
             # --- Dynamic Configuration Retrieval ---
-            cfg = cls.CONFIGS.get(strength, cls.CONFIGS["medium"])
+            cfg = InpaintWorker.CONFIGS.get(strength, InpaintWorker.CONFIGS["medium"])
             dilate_kernel_size = cfg["dilate_kernel_size"]
             dilate_iterations = cfg["dilate_iterations"]
             step_size = cfg["step_size"]

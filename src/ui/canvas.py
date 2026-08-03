@@ -3,6 +3,7 @@ from PySide6.QtGui import QBrush, QColor, QPainter, QPixmap, QWheelEvent, QMouse
 from PySide6.QtCore import Qt, Signal, QPointF, QTimer, QPoint, QRectF
 import numpy as np
 import time
+from src.utils.i18n import tr
 from typing import Optional
 
 class InteractiveTextItem(QGraphicsItem):
@@ -184,7 +185,7 @@ class IconifyCanvas(QGraphicsView):
         self.is_zooming = False
 
         # Placeholder
-        self.placeholder_label = QLabel("Click or Drag Image Here")
+        self.placeholder_label = QLabel(tr("Click or Drag Image Here"))
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setStyleSheet("color: #888; font-size: 14px; background: transparent;")
         self.placeholder_label.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -613,7 +614,7 @@ class IconifyCanvas(QGraphicsView):
     def dropEvent(self, event) -> None:
         for url in event.mimeData().urls():
             file_path = url.toLocalFile()
-            if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')):
+            if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp', '.icns')):
                 event.acceptProposedAction()
                 self.file_dropped.emit(file_path)
                 break

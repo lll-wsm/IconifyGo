@@ -22,9 +22,20 @@ class ImageProcessor:
         self.folder_engine = FolderStyleEngine()
 
     def load_image(self, file_path: str) -> bool:
-        """Loads an image from a file path using OpenCV."""
+        """Loads an image from a file path using OpenCV or PIL for .icns."""
         try:
-            image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+            if file_path.lower().endswith(".icns"):
+                # Use PIL for .icns files as OpenCV doesn't support them
+                with Image.open(file_path) as pil_img:
+                    # icns files often contain multiple sizes; PIL usually opens the largest/best
+                    # Ensure it's in RGBA mode
+                    pil_img = pil_img.convert("RGBA")
+                    # Convert to BGRA NumPy array for consistency with OpenCV
+                    rgba_np = np.array(pil_img)
+                    image = cv2.cvtColor(rgba_np, cv2.COLOR_RGBA2BGRA)
+            else:
+                image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+            
             if image is None:
                 raise ValueError(f"Could not load image at {file_path}")
             
