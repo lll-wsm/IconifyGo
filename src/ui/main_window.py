@@ -898,6 +898,13 @@ class MainWindow(QMainWindow):
             if bg.alpha() > 0:
                 bg_layer = Image.new("RGBA", styled_pil.size, (bg.red(), bg.green(), bg.blue(), bg.alpha()))
                 styled_pil = Image.alpha_composite(bg_layer, styled_pil)
+
+        # iOS app icons must not contain an alpha channel: App Store Connect
+        # rejects them, and iOS renders any remaining transparency as white.
+        if selected_style == "ios":
+            base_rgb = (bg.red(), bg.green(), bg.blue()) if bg.alpha() > 0 else (255, 255, 255)
+            opaque = Image.new("RGBA", styled_pil.size, (*base_rgb, 255))
+            styled_pil = Image.alpha_composite(opaque, styled_pil).convert("RGB")
         
         if format_name == "original_png":
             file_path, _ = QFileDialog.getSaveFileName(self, tr("Save PNG Image"), "", "PNG Image (*.png)")

@@ -36,27 +36,17 @@ class IconStyleEngine:
         return bg
 
     def create_ios_background(self) -> Image.Image:
-        """Creates an iOS style squircle background."""
-        base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
-        
-        # iOS Squircle (usually takes more space than macOS Big Sur)
-        icon_size = int(self.size * 0.94)
-        padding = (self.size - icon_size) // 2
-        corner_radius = int(icon_size * 0.22)
-        
-        rect = [padding, padding, padding + icon_size, padding + icon_size]
-        
-        # iOS icons don't usually have external shadows on the home screen, 
-        # but for preview we add a very tiny one.
-        mask = Image.new("L", (self.size, self.size), 0)
-        m_draw = ImageDraw.Draw(mask)
-        m_draw.rounded_rectangle(rect, radius=corner_radius, fill=255)
-        
-        # Light gray gradient dynamically tinted
-        bg = self._create_gradient_background(rect, 0.96)
-            
-        base.paste(bg, (0, 0), mask)
-        return base
+        """Creates a full-bleed opaque background for iOS app icons.
+
+        iOS requires square, edge-to-edge artwork without alpha and without
+        pre-rendered corner rounding: the system applies its own squircle mask,
+        and transparent regions would show as white edges on the home screen
+        (and be rejected by App Store Connect).
+        """
+        rect = [0, 0, self.size, self.size]
+
+        # Subtle top-to-bottom gradient dynamically tinted
+        return self._create_gradient_background(rect, 0.96)
 
     def create_android_background(self) -> Image.Image:
         """Creates an Android Adaptive Icon style (circular) background."""
