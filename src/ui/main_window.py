@@ -9,9 +9,10 @@ from src.engine.rembg_worker import RembgWorker
 from src.engine.inpaint_worker import InpaintWorker
 from src.engine.preview_worker import PreviewWorker
 from src.engine.icon_styles import IconStyleEngine
-from src.engine.folder_styles import FolderStyleEngine
-from src.engine.document_styles import DocumentStyleEngine
-from src.utils.export import export_icns, export_png_set, export_ico
+from src.utils.export import (
+    export_icns, export_ico, export_png_set,
+    export_android_set, export_iconset_dir,
+)
 from src.utils.text_renderer import serialize_text_item, draw_text_on_np
 import numpy as np
 import time
@@ -679,38 +680,26 @@ class MainWindow(QMainWindow):
         if rgba is None:
             rgba = np.zeros((1, 1, 4), dtype=np.uint8)
 
-        import cv2
-        from PySide6.QtGui import QImage, QPixmap
-
-        # Get customized background color and format it for different engines
-        bg_tuple = (bg.red(), bg.green(), bg.blue(), bg.alpha())
-        if bg.alpha() == 0:
-            hex_color = "#5ac8fa"
-            doc_color = (255, 255, 255)
-        else:
-            r, g, b = bg_tuple[:3]
-            hex_color = f"#{r:02x}{g:02x}{b:02x}"
-            doc_color = (r, g, b)
-
+        text_items = [item for item in self.canvas.scene.items()
+                      if isinstance(item, InteractiveTextItem) and item.text.strip()]
+        text_items_data = [serialize_text_item(item) for item in text_items]
+        canvas_ref_size = self.get_canvas_ref_size()
+        hex_color = "#5ac8fa" if bg.alpha() == 0 else \
+            f"#{bg.red():02x}{bg.green():02x}{bg.blue():02x}"
+        doc_color = (255, 255, 255) if bg.alpha() == 0 else \
+            (bg.red(), bg.green(), bg.blue())
         scale_mult = self.style_subject_scales.get(style_id, 1.0)
 
-        styled_np = None
-        if style_id in ["big_sur", "catalina", "classic", "ios", "android"]:
-            engine = IconStyleEngine()
-            engine.background_color = bg_tuple
-            styled_np = engine.apply_style(rgba, style_id, scale_multiplier=scale_mult)
-        elif style_id == "folder_center":
-            engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="center", scale_multiplier=scale_mult)
-        elif style_id == "folder_cover":
-            engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(rgba, color=hex_color, layout="cover", scale_multiplier=scale_mult)
-        elif style_id == "document_center":
-            engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="center", scale_multiplier=scale_mult)
-        elif style_id == "document_cover":
-            engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(rgba, color=doc_color, layout="cover", scale_multiplier=scale_mult)
+        from src.engine.style_render import render_style_1024
+        styled_np = render_style_1024(
+            rgba, style_id,
+            bg=(bg.red(), bg.green(), bg.blue(), bg.alpha()),
+            scale_multiplier=scale_mult,
+            text_items_data=text_items_data,
+            canvas_ref_size=canvas_ref_size,
+            hex_color=hex_color,
+            doc_color=doc_color,
+        )
 
         if styled_np is None:
             self.canvas.clear_preview()
@@ -718,10 +707,13 @@ class MainWindow(QMainWindow):
 
         # Convert BGRA numpy to QPixmap
         height, width = styled_np.shape[:2]
+        import cv2
+        from PySide6.QtGui import QImage, QPixmap
         rgb_img = cv2.cvtColor(styled_np, cv2.COLOR_BGRA2RGBA)
         qimg = QImage(rgb_img.data, width, height, 4 * width, QImage.Format_RGBA8888).copy()
         pixmap = QPixmap.fromImage(qimg)
         self.canvas.show_preview(pixmap)
+
 
     def _run_async_preview(self):
         rgba = self.image_processor.get_rgba_image(show_watermark=False)
@@ -861,38 +853,28 @@ class MainWindow(QMainWindow):
 
         subject_rgba = rgba if rgba is not None else np.zeros((1, 1, 4), dtype=np.uint8)
 
-        styled_np = None
-        if selected_style in ["big_sur", "catalina", "classic", "ios", "android"]:
-            engine = IconStyleEngine()
-            engine.background_color = bg_tuple
-            styled_np = engine.apply_style(subject_rgba, selected_style, scale_multiplier=scale_mult)
-        elif selected_style == "folder_center":
-            engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(subject_rgba, color=hex_color, layout="center", scale_multiplier=scale_mult)
-        elif selected_style == "folder_cover":
-            engine = FolderStyleEngine()
-            styled_np = engine.apply_folder_style(subject_rgba, color=hex_color, layout="cover", scale_multiplier=scale_mult)
-        elif selected_style == "document_center":
-            engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(subject_rgba, color=doc_color, layout="center", scale_multiplier=scale_mult)
-        elif selected_style == "document_cover":
-            engine = DocumentStyleEngine()
-            styled_np = engine.apply_document_style(subject_rgba, color=doc_color, layout="cover", scale_multiplier=scale_mult)
+        text_items_data = [serialize_text_item(item) for item in text_items]
+        canvas_ref_size = self.get_canvas_ref_size()
+
+        # Single shared renderer (same as the on-canvas preview and the gallery
+        # thumbnails) so export == preview.
+        from src.engine.style_render import render_style_1024
+        styled_np = render_style_1024(
+            subject_rgba, selected_style,
+            bg=bg_tuple,
+            scale_multiplier=scale_mult,
+            text_items_data=text_items_data,
+            canvas_ref_size=canvas_ref_size,
+            hex_color=hex_color,
+            doc_color=doc_color,
+        )
 
         if styled_np is None:
-            if rgba is not None:
-                styled_np = rgba.copy()
-            else:
-                styled_np = np.zeros((1024, 1024, 4), dtype=np.uint8)
-
-        if text_items:
-            text_items_data = [serialize_text_item(item) for item in text_items]
-            canvas_ref_size = self.get_canvas_ref_size()
-            styled_np = draw_text_on_np(styled_np, text_items_data, canvas_ref_size)
+            styled_np = subject_rgba.copy()
 
         styled_rgb = cv2.cvtColor(styled_np, cv2.COLOR_BGRA2RGBA)
         styled_pil = Image.fromarray(styled_rgb)
-        
+
         # Composite background color behind original image if set
         if selected_style == "original":
             if bg.alpha() > 0:
@@ -905,41 +887,140 @@ class MainWindow(QMainWindow):
             base_rgb = (bg.red(), bg.green(), bg.blue()) if bg.alpha() > 0 else (255, 255, 255)
             opaque = Image.new("RGBA", styled_pil.size, (*base_rgb, 255))
             styled_pil = Image.alpha_composite(opaque, styled_pil).convert("RGB")
-        
+
+        from src.engine.icon_presets import IOS_MASTER_SIZE
+
+        def _square_1024(img):
+            """Full-bleed square RGBA 1024 used by every platform export."""
+            rgba = img.convert("RGBA") if img.mode != "RGBA" else img
+            w, h = rgba.size
+            side = max(w, h)
+            canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            canvas.paste(rgba, ((side - w) // 2, (side - h) // 2))
+            if canvas.size[0] != IOS_MASTER_SIZE:
+                canvas = canvas.resize((IOS_MASTER_SIZE, IOS_MASTER_SIZE), Image.Resampling.LANCZOS)
+            return canvas
+
+        # Android / Play exports are *not* the macOS plate: they need the
+        # subject (logo+text) as a *transparent glyph layer* + a solid colour
+        # background.  Reuse the icon engine to build that clean glyph, then
+        # let export_android_set place it in the 66dp safe zone.
+        def _android_sources():
+            """(glyph_pil, flat_rgb) — tight glyph of subject+text."""
+            g_engine = IconStyleEngine(size=IOS_MASTER_SIZE)
+            glyph_bgra = g_engine.make_glyph(subject_rgba)
+            glyph_rgba = cv2.cvtColor(glyph_bgra, cv2.COLOR_BGRA2RGBA)
+            glyph_pil = Image.fromarray(glyph_rgba)
+            if text_items:
+                # draw_text_on_np scales by (target/ref); a tight glyph can be
+                # any size, so use ref = glyph size to avoid distortion.
+                glyph_pil = glyph_pil.convert("RGBA")
+                arr = np.array(glyph_pil)
+                arr_bgra = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGRA)
+                arr_bgra = draw_text_on_np(arr_bgra, text_items_data,
+                                           (glyph_pil.width, glyph_pil.height))
+                glyph_pil = Image.fromarray(cv2.cvtColor(arr_bgra,
+                                                          cv2.COLOR_BGRA2RGBA))
+            flat_rgb = (bg.red(), bg.green(), bg.blue()) if bg.alpha() > 0 else (255, 255, 255)
+            return glyph_pil, flat_rgb
+
+        def _save_path(title, filt, default_name):
+            return QFileDialog.getSaveFileName(self, title, default_name, filt)[0]
+
+        def _dir_path(title):
+            return QFileDialog.getExistingDirectory(self, title)
+
+        success = False
+        picked = False
+
+        # --- format_name values are emitted from the export menu ---
         if format_name == "original_png":
-            file_path, _ = QFileDialog.getSaveFileName(self, tr("Save PNG Image"), "", "PNG Image (*.png)")
+            # Export the current artwork at the source image's native size.
+            # * original style  -> the cutout subject (+text+bg), native res
+            # * styled style    -> the styled 1024 plate downscaled to native
+            file_path = _save_path(tr("Save PNG Image"), "PNG Image (*.png)", "")
             if file_path:
-                orig_img = self.image_processor.original_image
-                if orig_img is not None:
-                    h_orig, w_orig = orig_img.shape[:2]
-                    if styled_pil.size != (w_orig, h_orig):
-                        styled_pil = styled_pil.resize((w_orig, h_orig), Image.Resampling.LANCZOS)
+                picked = True
+                from src.engine.style_render import render_original_native
+                if selected_style == "original":
+                    export_img = render_original_native(
+                        subject_rgba, bg=bg_tuple,
+                        text_items_data=text_items_data,
+                        canvas_ref_size=canvas_ref_size)
+                    export_img = Image.fromarray(
+                        cv2.cvtColor(export_img, cv2.COLOR_BGRA2RGBA))
+                else:
+                    export_img = styled_pil
+                    orig_img = self.image_processor.original_image
+                    if orig_img is not None:
+                        h_orig, w_orig = orig_img.shape[:2]
+                        if export_img.size != (w_orig, h_orig):
+                            export_img = export_img.resize(
+                                (w_orig, h_orig), Image.Resampling.LANCZOS)
                 try:
-                    styled_pil.save(file_path, "PNG")
-                    ModernMessageBox.show_info(self, tr("Success"), tr("Exported successfully"))
+                    export_img.convert("RGBA").save(file_path, "PNG")
+                    success = True
                 except Exception as e:
                     ModernMessageBox.show_error(self, tr("Error"), f"{tr('Failed to export')}: {str(e)}")
-        elif ".icns" in format_name:
-            file_path, _ = QFileDialog.getSaveFileName(self, tr("Save ICNS Icon"), "", "macOS Icon (*.icns)")
+
+        elif format_name == "png_1024":
+            # A single 1024 full-bleed PNG (for iOS/asset pipelines / stores).
+            file_path = _save_path(tr("Save PNG Image"), "PNG Image (*.png)", "icon_1024.png")
             if file_path:
-                if export_icns(styled_pil, file_path):
-                    ModernMessageBox.show_info(self, tr("Success"), tr("Exported successfully"))
-                else:
-                    ModernMessageBox.show_error(self, tr("Error"), tr("Failed to export ICNS icon"))
-        elif ".ico" in format_name:
-            file_path, _ = QFileDialog.getSaveFileName(self, tr("Save ICO Icon"), "", "Windows Icon (*.ico)")
+                picked = True
+                base_rgb = (bg.red(), bg.green(), bg.blue()) if bg.alpha() > 0 else (255, 255, 255)
+                # styled_pil may already be RGB (iOS path); always composite on RGBA.
+                comp = styled_pil.convert("RGBA")
+                opaque = Image.new("RGBA", comp.size, (*base_rgb, 255))
+                full = Image.alpha_composite(opaque, comp).convert("RGB")
+                try:
+                    _square_1024(full).save(file_path, "PNG")
+                    success = True
+                except Exception as e:
+                    ModernMessageBox.show_error(self, tr("Error"), f"{tr('Failed to export')}: {str(e)}")
+
+        elif format_name == "icns":
+            file_path = _save_path(tr("Save ICNS Icon"), "macOS Icon (*.icns)", "icon.icns")
             if file_path:
-                if export_ico(styled_pil, file_path):
-                    ModernMessageBox.show_info(self, tr("Success"), tr("Exported successfully"))
-                else:
-                    ModernMessageBox.show_error(self, tr("Error"), tr("Failed to export ICO icon"))
-        else:
-            dir_path = QFileDialog.getExistingDirectory(self, tr("Select Output Directory"))
+                picked = True
+                success = export_icns(_square_1024(styled_pil), file_path)
+
+        elif format_name == "iconset":
+            dir_path = _dir_path(tr("Select Output Directory"))
             if dir_path:
-                if export_png_set(styled_pil, dir_path):
-                    ModernMessageBox.show_info(self, tr("Success"), tr("Exported PNG set"))
-                else:
-                    ModernMessageBox.show_error(self, tr("Error"), tr("Failed to export PNG set"))
+                picked = True
+                success = export_iconset_dir(_square_1024(styled_pil), dir_path)
+
+        elif format_name == "ico":
+            file_path = _save_path(tr("Save ICO Icon"), "Windows Icon (*.ico)", "icon.ico")
+            if file_path:
+                picked = True
+                success = export_ico(_square_1024(styled_pil), file_path)
+
+        elif format_name == "android":
+            dir_path = _dir_path(tr("Select Output Directory"))
+            if dir_path:
+                picked = True
+                glyph_pil, flat_rgb = _android_sources()
+                success = export_android_set(glyph_pil, dir_path, bg_rgb=flat_rgb)
+
+        elif format_name == "png_set":
+            dir_path = _dir_path(tr("Select Output Directory"))
+            if dir_path:
+                picked = True
+                bg_rgb = (bg.red(), bg.green(), bg.blue()) if bg.alpha() > 0 else (255, 255, 255)
+                glyph_pil, _ = _android_sources()
+                # macOS/iOS/Windows use the styled plate; Android uses the glyph
+                # so the adaptive layer is always clean (no gradient plate leak).
+                success = export_png_set(_square_1024(styled_pil), dir_path,
+                                         bg_rgb=bg_rgb, glyph=glyph_pil)
+
+        if picked:
+            if success:
+                ModernMessageBox.show_info(self, tr("Success"), tr("Exported successfully"))
+            else:
+                ModernMessageBox.show_error(self, tr("Error"), tr("Failed to export"))
+
 
     def closeEvent(self, event) -> None:
         """Gracefully stop all background threads and timers on close to prevent segmentation faults."""

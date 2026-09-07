@@ -46,9 +46,12 @@ _translations = {
         # --- Export menu ---
         "Export Format": "导出格式",
         "Original Size PNG (.png)": "原始尺寸 PNG (.png)",
+        "PNG 1024 (no alpha)": "PNG 1024（无透明通道）",
         "macOS Icon (.icns)": "macOS 图标 (.icns)",
+        "macOS Iconset (folder)": "macOS Iconset（文件夹）",
         "Windows Icon (.ico)": "Windows 图标 (.ico)",
-        "PNG Image Set": "PNG 图片集",
+        "Android Icon Set": "Android 图标集",
+        "PNG Image Set (all)": "PNG 图片集（全平台）",
 
         # --- Shape menu ---
         "Circle": "圆形",

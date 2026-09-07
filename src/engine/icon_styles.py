@@ -3,6 +3,16 @@ import numpy as np
 import cv2
 from typing import Optional, Tuple, Dict, Callable
 
+# Android Adaptive Icon: safe zone = 66/108 of the layer canvas (the inner
+# 66x66dp that masks never clip).  Used so the editor preview places the
+# subject exactly like the exported foreground layer.
+ANDROID_SAFE_SCALE = 66.0 / 108.0  # 0.611
+
+# macOS HIG icon grid: ~824 of the 1024 canvas is the standard "apple shape"
+# art box; macOS does not round corners for you, so we pre-shape the squircle.
+_MACOS_CONTENT = 824.0 / 1024.0
+
+
 class IconStyleEngine:
     def __init__(self, size: int = 1024):
         self.size = size
@@ -10,241 +20,247 @@ class IconStyleEngine:
         self.background_color = (255, 255, 255, 255)
         self._cache: Dict[Tuple[str, int, Tuple[int, ...]], Image.Image] = {}
         self._style_registry: Dict[str, Tuple[Callable[[], Image.Image], float]] = {
-            "big_sur": (self.create_big_sur_background, 0.6),
-            "catalina": (self.create_catalina_background, 0.65),
+            "big_sur": (self.create_big_sur_background, 0.62),
+            "catalina": (self.create_catalina_background, 0.6),
             "classic": (self.create_classic_background, 0.6),
-            "ios": (self.create_ios_background, 0.7),
-            "android": (self.create_android_background, 0.7),
+            "ios": (self.create_ios_background, 0.78),
+            "android": (self.create_android_background, 0.611),  # 66/108 safe zone
         }
 
+    def _rgb_from_bg(self, fallback=(255, 255, 255)):
+        """Return an opaque RGB triple: honor alpha>0, else white."""
+        c = self.background_color
+        if len(c) >= 4 and c[3] == 0:
+            return fallback
+        return c[:3]
+
+    # ------------------------------------------------------------------
+    # iOS — full-bleed, opaque, no pre-rounded corners, no alpha anywhere
+    # ------------------------------------------------------------------
+    def create_ios_background(self) -> Image.Image:
+        """Full-bleed opaque iOS icon canvas (1024x1024, alpha = 255).
+
+        iOS requires square edge-to-edge artwork with *no* alpha and *no*
+        pre-rendered corner rounding — the system applies its own squircle
+        mask (and App Store Connect rejects transparency).  So the returned
+        image must never contain a transparent pixel.
+        """
+        r, g, b = self._rgb_from_bg()
+        # Solid base guarantees full opacity for every pixel.
+        return Image.new("RGB", (self.size, self.size), (r, g, b))
+
+    # ------------------------------------------------------------------
+    # Android — full-bleed square background (Adaptive Icon spec).
+    #
+    # Android 8.0+ Adaptive Icons: the launcher masks square layers itself.
+    # Foreground & background are BOTH square 108x108dp canvases (never
+    # pre-rounded/circular); the central 72x72dp is the visible viewport and
+    # 66x66dp is the guaranteed safe zone.  The editor preview therefore shows
+    # a full-bleed square plate (== the exported background layer) with the
+    # subject placed inside the safe zone, so preview == export.
+    # ------------------------------------------------------------------
+    def create_android_background(self) -> Image.Image:
+        """Full-bleed square background layer for an Android Adaptive Icon.
+
+        The device launcher applies its own mask (circle/squircle/square); the
+        layer itself must be square and fully opaque so nothing is lost under
+        the mask.  Alpha = 255 everywhere except where a subtle plate is drawn.
+        """
+        r, g, b = self._rgb_from_bg(fallback=(60, 60, 60))
+        # Full-bleed opaque square (exactly the adaptive background layer).
+        return Image.new("RGBA", (self.size, self.size), (r, g, b, 255))
+
+    def create_big_sur_background(self) -> Image.Image:
+        """Big Sur style squircle with subtle gradient and soft shadow.
+
+        Icon body matches the macOS grid (≈824/1024).  The corner is a
+        superellipse-like path (n=5) instead of a plain rounded rectangle, and
+        the drop shadow is drawn offset so its edges never collide with the
+        1024 canvas borders.
+        """
+        side = self.size
+        base = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+
+        # Superellipse body inset to the macOS content grid (~824 px).
+        inset = (side - int(side * _MACOS_CONTENT)) // 2  # ~100px
+        rect = (inset, inset, side - inset, side - inset)
+        n = 5.0
+
+        def superellipse(rect, n):
+            x0, y0, x1, y1 = rect
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            a, b = (x1 - x0) / 2.0, (y1 - y0) / 2.0
+            pts = []
+            steps = 400
+            for i in range(steps):
+                t = 2.0 * np.pi * i / steps
+                px = cx + a * np.sign(np.cos(t)) * np.abs(np.cos(t)) ** (2.0 / n)
+                py = cy + b * np.sign(np.sin(t)) * np.abs(np.sin(t)) ** (2.0 / n)
+                pts.append((px, py))
+            return pts
+
+        # Shadow: paste offset inside so it is not clipped by canvas edges.
+        shadow_off = int(side * 0.012)
+        blur = int(side * 0.02)
+        sh_rect = (inset, inset + shadow_off, side - inset, side - inset + shadow_off)
+        sh_mask = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(sh_mask).polygon(superellipse(sh_rect, n), fill=90)
+        sh_mask = sh_mask.filter(ImageFilter.GaussianBlur(blur))
+        shadow = Image.new("RGBA", (side, side), (0, 0, 0, 255))
+        base.paste(shadow, (0, 0), sh_mask)
+
+        # Gradient body.
+        gradient = self._create_gradient_background(list(rect), 0.94)
+        body_mask = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(body_mask).polygon(superellipse(rect, n), fill=255)
+        base.paste(gradient, (0, 0), body_mask)
+
+        return base
+
+    def create_catalina_background(self) -> Image.Image:
+        """Catalina-style circular icon with a soft shadow and gradient."""
+        side = self.size
+        base = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+
+        size = int(side * 0.85)
+        pad = (side - size) // 2
+        rect = (pad, pad, pad + size, pad + size)
+
+        # shadow inside canvas
+        blur = int(side * 0.02)
+        sh_rect = (pad, pad + int(side * 0.01), pad + size, pad + size + int(side * 0.01))
+        sh_mask = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(sh_mask).ellipse(sh_rect, fill=70)
+        sh_mask = sh_mask.filter(ImageFilter.GaussianBlur(blur))
+        base.paste(Image.new("RGBA", (side, side), (0, 0, 0, 255)), (0, 0), sh_mask)
+
+        mask = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(mask).ellipse(rect, fill=255)
+        gradient = self._create_gradient_background(list(rect), 0.98)
+        base.paste(gradient, (0, 0), mask)
+
+        ImageDraw.Draw(base).ellipse(rect, outline=(220, 220, 220, 255), width=2)
+        return base
+
+    def create_classic_background(self) -> Image.Image:
+        """Classic rounded-rectangle icon (pre-Big Sur macOS style)."""
+        side = self.size
+        base = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+
+        w = int(side * 0.9)
+        h = int(side * 0.7)
+        pad_x = (side - w) // 2
+        pad_y = (side - h) // 2
+        radius = int(side * 0.05)
+        rect = (pad_x, pad_y, pad_x + w, pad_y + h)
+
+        # shadow
+        blur = int(side * 0.02)
+        sh_rect = (pad_x, pad_y + int(side * 0.01), pad_x + w, pad_y + h + int(side * 0.01))
+        sh_mask = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(sh_mask).rounded_rectangle(sh_rect, radius=radius, fill=60)
+        sh_mask = sh_mask.filter(ImageFilter.GaussianBlur(blur))
+        base.paste(Image.new("RGBA", (side, side), (0, 0, 0, 255)), (0, 0), sh_mask)
+
+        mask = Image.new("L", (side, side), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(rect, radius=radius, fill=255)
+        bg = Image.new("RGBA", (side, side), self._rgb_from_bg())
+        base.paste(bg, (0, 0), mask)
+        return base
+
+    # ------------------------------------------------------------------
+    # generic gradient helper
+    # ------------------------------------------------------------------
     def _create_gradient_background(self, rect, factor: float) -> Image.Image:
         padding = rect[1]
         icon_size = rect[3] - rect[1]
         bg = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
         g_draw = ImageDraw.Draw(bg)
-        
-        r, g, b = self.background_color[:3]
-        a = self.background_color[3] if len(self.background_color) > 3 else 255
-        
+
+        r, g, b = self._rgb_from_bg()
         for i in range(padding, padding + icon_size):
             progress = (i - padding) / icon_size
             current_factor = factor + progress * (1.0 - factor)
             curr_r = int(max(0, min(255, r * current_factor)))
             curr_g = int(max(0, min(255, g * current_factor)))
             curr_b = int(max(0, min(255, b * current_factor)))
-            g_draw.line([(rect[0], i), (rect[2], i)], fill=(curr_r, curr_g, curr_b, a))
+            g_draw.line([(rect[0], i), (rect[2], i)], fill=(curr_r, curr_g, curr_b, 255))
         return bg
 
-    def create_ios_background(self) -> Image.Image:
-        """Creates a full-bleed opaque background for iOS app icons.
-
-        iOS requires square, edge-to-edge artwork without alpha and without
-        pre-rendered corner rounding: the system applies its own squircle mask,
-        and transparent regions would show as white edges on the home screen
-        (and be rejected by App Store Connect).
-        """
-        rect = [0, 0, self.size, self.size]
-
-        # Subtle top-to-bottom gradient dynamically tinted
-        return self._create_gradient_background(rect, 0.96)
-
-    def create_android_background(self) -> Image.Image:
-        """Creates an Android Adaptive Icon style (circular) background."""
-        base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
-        
-        icon_size = int(self.size * 0.9)
-        padding = (self.size - icon_size) // 2
-        rect = [padding, padding, padding + icon_size, padding + icon_size]
-        
-        # Mask for circle
-        mask = Image.new("L", (self.size, self.size), 0)
-        m_draw = ImageDraw.Draw(mask)
-        m_draw.ellipse(rect, fill=255)
-        
-        # Material Design background dynamically tinted
-        bg = Image.new("RGBA", (self.size, self.size), self.background_color)
-        base.paste(bg, (0, 0), mask)
-        
-        return base
-
-    def create_big_sur_background(self) -> Image.Image:
-        """Creates a Big Sur style squircle background with a subtle gradient and shadow."""
-        base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
-        
-        # Big Sur Squircle parameters
-        # In a 1024x1024 canvas, the icon is usually around 824x824
-        icon_size = int(self.size * 0.8)
-        padding = (self.size - icon_size) // 2
-        corner_radius = int(icon_size * 0.22) # Approximate squircle radius
-        
-        rect = [padding, padding, padding + icon_size, padding + icon_size]
-        
-        # Shadow (very subtle)
-        shadow_offset = int(self.size * 0.02)
-        shadow_blur = int(self.size * 0.04)
-        shadow_mask = Image.new("L", (self.size, self.size), 0)
-        shadow_draw = ImageDraw.Draw(shadow_mask)
-        shadow_draw.rounded_rectangle(rect, radius=corner_radius, fill=100)
-        shadow_mask = shadow_mask.filter(ImageFilter.GaussianBlur(shadow_blur))
-        
-        shadow = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 255))
-        base.paste(shadow, (0, shadow_offset), shadow_mask)
-
-        # Gradient Background dynamically tinted
-        gradient = self._create_gradient_background(rect, 0.94)
-        
-        # Mask for the squircle
-        mask = Image.new("L", (self.size, self.size), 0)
-        m_draw = ImageDraw.Draw(mask)
-        m_draw.rounded_rectangle(rect, radius=corner_radius, fill=255)
-        
-        base.paste(gradient, (0, 0), mask)
-        
-        # Border (subtle)
-        draw = ImageDraw.Draw(base)
-        draw.rounded_rectangle(rect, radius=corner_radius, outline=(200, 200, 200, 255), width=2)
-        
-        return base
-
-    def create_catalina_background(self) -> Image.Image:
-        """Creates a Catalina style circular background."""
-        base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
-        
-        icon_size = int(self.size * 0.85)
-        padding = (self.size - icon_size) // 2
-        rect = [padding, padding, padding + icon_size, padding + icon_size]
-        
-        # Shadow
-        shadow_blur = int(self.size * 0.02)
-        shadow_mask = Image.new("L", (self.size, self.size), 0)
-        shadow_draw = ImageDraw.Draw(shadow_mask)
-        shadow_draw.ellipse(rect, fill=80)
-        shadow_mask = shadow_mask.filter(ImageFilter.GaussianBlur(shadow_blur))
-        
-        shadow = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 255))
-        base.paste(shadow, (0, int(self.size * 0.01)), shadow_mask)
-
-        # Gradient (subtle top-to-bottom for circular icons) dynamically tinted
-        mask = Image.new("L", (self.size, self.size), 0)
-        m_draw = ImageDraw.Draw(mask)
-        m_draw.ellipse(rect, fill=255)
-        
-        gradient = self._create_gradient_background(rect, 0.98)
-
-        base.paste(gradient, (0, 0), mask)
-        
-        draw = ImageDraw.Draw(base)
-        draw.ellipse(rect, outline=(220, 220, 220, 255), width=2)
-        
-        return base
-
-    def create_classic_background(self) -> Image.Image:
-        """Creates a Classic style rectangular background with rounded corners."""
-        base = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 0))
-        
-        # Usually rectangular icons are full size or slightly padded
-        icon_width = int(self.size * 0.9)
-        icon_height = int(self.size * 0.7)
-        padding_x = (self.size - icon_width) // 2
-        padding_y = (self.size - icon_height) // 2
-        corner_radius = int(self.size * 0.05)
-        
-        rect = [padding_x, padding_y, padding_x + icon_width, padding_y + icon_height]
-        
-        # Shadow
-        shadow_blur = int(self.size * 0.02)
-        shadow_mask = Image.new("L", (self.size, self.size), 0)
-        shadow_draw = ImageDraw.Draw(shadow_mask)
-        shadow_draw.rounded_rectangle(rect, radius=corner_radius, fill=60)
-        shadow_mask = shadow_mask.filter(ImageFilter.GaussianBlur(shadow_blur))
-        
-        shadow = Image.new("RGBA", (self.size, self.size), (0, 0, 0, 255))
-        base.paste(shadow, (0, int(self.size * 0.01)), shadow_mask)
-
-        mask = Image.new("L", (self.size, self.size), 0)
-        m_draw = ImageDraw.Draw(mask)
-        m_draw.rounded_rectangle(rect, radius=corner_radius, fill=255)
-        
-        bg = Image.new("RGBA", (self.size, self.size), self.background_color)
-        base.paste(bg, (0, 0), mask)
-        
-        draw = ImageDraw.Draw(base)
-        draw.rounded_rectangle(rect, radius=corner_radius, outline=(200, 200, 200, 255), width=2)
-        
-        return base
-
+    # ------------------------------------------------------------------
+    # cache / apply
+    # ------------------------------------------------------------------
     def get_background(self, style_name: str) -> Tuple[Optional[Image.Image], float]:
-        """Gets background from cache or creates it."""
         if style_name not in self._style_registry:
             return None, 1.0
-            
-        bg_color = self.background_color
+
+        # All iOS pixels must be opaque; ignore the alpha of a user color pick.
+        bg_color = self._rgb_from_bg() + (255,) if style_name == "ios" else self.background_color
         if len(bg_color) >= 4 and bg_color[3] == 0:
             bg_color = (255, 255, 255, 255)
-            
+
         cache_key = (style_name, self.size, bg_color)
         if cache_key not in self._cache:
-            original_bg = self.background_color
+            original = self.background_color
             self.background_color = bg_color
-            create_func, content_scale = self._style_registry[style_name]
+            create_func, _ = self._style_registry[style_name]
             self._cache[cache_key] = create_func()
-            self.background_color = original_bg
-            
+            self.background_color = original
         return self._cache[cache_key].copy(), self._style_registry[style_name][1]
 
+    def make_glyph(self, logo_cv: np.ndarray) -> np.ndarray:
+        """Return a tight-cropped RGBA glyph of the subject (transparent
+        padding removed).  Android adaptive exporters do all placement/sizing
+        from this tight glyph (they fit it into the safe zone)."""
+        h, w = logo_cv.shape[:2]
+        logo_rgba = cv2.cvtColor(logo_cv, cv2.COLOR_BGRA2RGBA)
+        pil = Image.fromarray(logo_rgba)
+        bbox = pil.getbbox()
+        if bbox:
+            pil = pil.crop(bbox)
+        out = np.array(pil)
+        return cv2.cvtColor(out, cv2.COLOR_RGBA2BGRA)
+
     def apply_style(self, logo_cv: np.ndarray, style_name: str, scale_multiplier: float = 1.0) -> np.ndarray:
-        """
-        Applies a macOS style to a logo image.
-        logo_cv: RGBA numpy array (OpenCV format)
-        Returns: RGBA numpy array
-        """
+        """Applies a platform style to a logo (RGBA numpy). Returns RGBA numpy."""
         if style_name == "none" or not style_name:
             return logo_cv
 
-        # Update engine size if logo size is significantly different
         h, w = logo_cv.shape[:2]
         max_dim = max(h, w)
-        if abs(self.size - (max_dim / 0.6)) > 50: # roughly estimate background size
+        if abs(self.size - (max_dim / 0.6)) > 50:
             self.size = max(self.min_size, int(max_dim / 0.6))
-            # Cache is still valid for other sizes, but we want a good base size
 
         background, content_scale = self.get_background(style_name)
         if background is None:
             return logo_cv
 
-        # Convert OpenCV (BGRA) to PIL (RGBA)
         logo_rgba = cv2.cvtColor(logo_cv, cv2.COLOR_BGRA2RGBA)
         logo_pil = Image.fromarray(logo_rgba)
-        
-        # Crop to content to ensure centering is based on the subject, not image bounds
+
         bbox = logo_pil.getbbox()
         if bbox:
             logo_pil = logo_pil.crop(bbox)
-        
-        # Resize logo to fit inside background
+
         bg_w, bg_h = background.size
         target_size = int(min(bg_w, bg_h) * content_scale * scale_multiplier)
-        
-        logo_w, logo_h = logo_pil.size
-        aspect = logo_w / logo_h
-        
+        lw, lh = logo_pil.size
+        aspect = lw / lh
         if aspect > 1:
-            new_w = target_size
-            new_h = int(target_size / aspect)
+            new_w, new_h = target_size, max(1, int(target_size / aspect))
         else:
-            new_h = target_size
-            new_w = int(target_size * aspect)
-            
+            new_h, new_w = target_size, max(1, int(target_size * aspect))
         logo_pil = logo_pil.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        
-        # Center logo on background
+
+        # Center the subject.
         offset = ((bg_w - new_w) // 2, (bg_h - new_h) // 2)
-        
-        # Composite
+        background = background.convert("RGBA") if background.mode != "RGBA" else background
         background.paste(logo_pil, offset, logo_pil)
-        
-        # Convert back to OpenCV (BGRA)
+
         result_rgba = np.array(background)
-        result_bgra = cv2.cvtColor(result_rgba, cv2.COLOR_RGBA2BGRA)
-        
-        return result_bgra
+        if style_name == "ios":
+            # Full-bleed iOS artwork must be 100% opaque everywhere; the
+            # anti-aliased logo edge pixels already blend onto the opaque bg,
+            # so any residual partial alpha must be flattened to 255.
+            result_rgba[..., 3] = 255
+        return cv2.cvtColor(result_rgba, cv2.COLOR_RGBA2BGRA)

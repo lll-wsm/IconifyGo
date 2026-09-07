@@ -554,9 +554,17 @@ class BottomBar(QWidget):
 
         exports = [
             (tr("Original Size PNG (.png)"), "original_png"),
-            (tr("macOS Icon (.icns)"), ".icns"),
-            (tr("Windows Icon (.ico)"), ".ico"),
-            (tr("PNG Image Set"), "PNG")
+            # iOS / generic store asset
+            (tr("PNG 1024 (no alpha)"), "png_1024"),
+            # macOS
+            (tr("macOS Icon (.icns)"), "icns"),
+            (tr("macOS Iconset (folder)"), "iconset"),
+            # Windows
+            (tr("Windows Icon (.ico)"), "ico"),
+            # Android (adaptive + legacy + Play Store)
+            (tr("Android Icon Set"), "android"),
+            # Full multi-platform set (iconsets, ios png, android, windows)
+            (tr("PNG Image Set (all)"), "png_set"),
         ]
         for label, val in exports:
             btn = QPushButton(label)
