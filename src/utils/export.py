@@ -257,7 +257,12 @@ def export_android_set(pil_image: Image.Image, output_dir: str,
         # based on the logo, not on any transparent padding (matches the
         # editor preview exactly; also avoids dark fringe from resizing
         # transparent padding).
-        glyph = _to_square_rgba(glyph).crop(glyph.getbbox()) if glyph.getbbox() else glyph
+        # NOTE: crop the tight glyph directly — do NOT square-pad first, as
+        # padding then re-cropping with the pre-pad bbox shifted the content
+        # and clipped the bottom/right of non-square logos.
+        bb = glyph.getbbox()
+        if bb:
+            glyph = glyph.crop(bb)
         bg = Image.new("RGBA", (IOS_MASTER_SIZE, IOS_MASTER_SIZE),
                        (*bg_rgb, 255))
 
