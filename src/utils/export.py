@@ -5,6 +5,7 @@ pipelines (macOS .iconset/.icns, iOS 1024 opaque PNG, Android adaptive layers,
 Windows .ico / UWP assets) receive spec-correct input.
 """
 import os
+import math
 import platform
 import shutil
 import subprocess
@@ -54,22 +55,23 @@ def _fit_square(pil_image: Image.Image, size: int) -> Image.Image:
     return rgba
 
 
-def _paste_centered(canvas: Image.Image, content: Image.Image, scale: float,
-                    cx: float = 0.5, cy: float = 0.5) -> Image.Image:
-    """Paste `content` (RGBA) centered on `canvas` (RGBA).  `scale` is the
-    fraction of the canvas side that the content's bounding box will occupy.
+def _paste_in_circle(canvas: Image.Image, content: Image.Image, circle_frac: float,
+                     cx: float = 0.5, cy: float = 0.5) -> Image.Image:
+    """Fit `content` so its bounding box is inscribed in a **circle** whose
+    diameter is `circle_frac` of the canvas side, then center it.
 
-    Resizing is done premultiplied (and un-premultiplied afterwards) so the
-    transparent halo around a cutout never becomes a dark fringe on downscale.
+    Android's adaptive-icon safe zone is a 66dp *diameter circle* (radius 33dp)
+    inside the 108dp layer: "a centered 66dp diameter circle as a safe zone,
+    guaranteed not to be clipped" (Google Design - Designing Adaptive Icons).
+    Fitting the bounding box's *diagonal* to that circle guarantees the corners
+    never exceed the radius, so launcher masks never clip the logo.
     """
     cw, ch = canvas.size
-    target = max(1, int(min(cw, ch) * scale))
+    diameter = min(cw, ch) * circle_frac
     w, h = content.size
-    aspect = w / h
-    if aspect >= 1:
-        nw, nh = target, max(1, int(target / aspect))
-    else:
-        nh, nw = target, max(1, int(target * aspect))
+    diag = math.hypot(w, h) or 1.0
+    k = diameter / diag
+    nw, nh = max(1, int(round(w * k))), max(1, int(round(h * k)))
     content = _unpremultiply(
         _premultiply(content).resize((nw, nh), Image.Resampling.LANCZOS))
     ox = int(cw * cx - nw / 2)
@@ -153,7 +155,10 @@ def _android_composite_preview(glyph_bgra: np.ndarray,
     glyph = Image.fromarray(glyph_rgba)
     bg = Image.new("RGBA", (1024, 1024), (*bg_rgb, 255))
     layer = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    _paste_centered(layer, glyph, 0.62)   # legacy launcher 48dp scale
+    # Same placement as the exported adaptive foreground: logo inscribed in the
+    # 66dp safe circle of the 108dp layer (so preview == export).
+    _paste_in_circle(layer, glyph,
+                     ANDROID_SAFE_ZONE_DP / ANDROID_ADAPTIVE_LAYER_DP)
     composed = Image.alpha_composite(bg, layer)
     out = np.array(composed)
     return cv2.cvtColor(out, cv2.COLOR_RGBA2BGRA)
@@ -266,8 +271,9 @@ def export_android_set(pil_image: Image.Image, output_dir: str,
         bg = Image.new("RGBA", (IOS_MASTER_SIZE, IOS_MASTER_SIZE),
                        (*bg_rgb, 255))
 
-        # adaptive foreground: glyph fitted to fill 100% of layer; the
-        # *placed* result inside the safe zone is handled by the density size.
+        # adaptive foreground: glyph inscribed in the 66dp safe *circle* of the
+        # 108dp layer (corners must not exceed radius 33dp, or launcher masks
+        # clip the logo).
         safe_scale = ANDROID_SAFE_ZONE_DP / ANDROID_ADAPTIVE_LAYER_DP  # 66/108
         res_dir = os.path.join(output_dir, "res")
         for density, s in ANDROID_DENSITIES_DPX.items():
@@ -275,25 +281,29 @@ def export_android_set(pil_image: Image.Image, output_dir: str,
             d_dir = os.path.join(res_dir, f"mipmap-{density}")
             os.makedirs(d_dir, exist_ok=True)
 
-            # adaptive foreground: transparent canvas, glyph within safe zone
+            # adaptive foreground: transparent canvas, glyph inside safe circle
             fg_layer = Image.new("RGBA", (layer_px, layer_px), (0, 0, 0, 0))
-            _paste_centered(fg_layer, glyph, safe_scale)
+            _paste_in_circle(fg_layer, glyph, safe_scale)
             fg_layer.save(os.path.join(d_dir, "ic_launcher_foreground.png"))
 
             bg.resize((layer_px, layer_px), Image.Resampling.LANCZOS).save(
                 os.path.join(d_dir, "ic_launcher_background.png"))
 
-            # legacy launcher: square bg + glyph (full square, no clip)
+            # legacy launcher: square bg + glyph.  Use the same safe-circle
+            # content size as the adaptive foreground so every Android output
+            # has identical proportions.
             bg_small = bg.resize((layer_px, layer_px), Image.Resampling.LANCZOS)
             fg_comp = Image.new("RGBA", (layer_px, layer_px), (0, 0, 0, 0))
-            _paste_centered(fg_comp, glyph, 0.62)
+            _paste_in_circle(fg_comp, glyph, safe_scale)
             Image.alpha_composite(bg_small, fg_comp).save(
                 os.path.join(d_dir, "ic_launcher.png"))
 
-        # Play Store listing icon (full square, no alpha, no shadow)
+        # Play Store listing icon (512 full square, no alpha, no shadow).
+        # Play applies its own ~30% radius mask, so keep the artwork within the
+        # same safe-circle proportion as the launcher icon.
         layer1024 = Image.new("RGBA", (IOS_MASTER_SIZE, IOS_MASTER_SIZE),
                               (0, 0, 0, 0))
-        _paste_centered(layer1024, glyph, 0.9)
+        _paste_in_circle(layer1024, glyph, safe_scale)
         play = Image.alpha_composite(bg, layer1024)
         play_rgb = Image.alpha_composite(
             Image.new("RGBA", play.size, (*bg_rgb, 255)), play).convert("RGB")

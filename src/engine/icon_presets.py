@@ -10,9 +10,11 @@ iOS (App Store Connect / HIG)
 
 Android adaptive icon (developer.android.com/studio/write/create-app-icons)
     - Foreground + background layers, each 108x108 dp.
-    - The masked (visible) viewport is 72x72 dp; content that must never be
-      clipped must live in the central 66x66 dp safe zone (i.e. <= 61.1% of the
-      layer canvas).  The outer 18dp ring is bleed for system effects.
+    - The masked (visible) viewport is 72x72 dp; masks may reach as little as
+      33dp from the center, so a centered **66dp diameter CIRCLE** (radius 33dp)
+      is the safe zone guaranteed not to be clipped (Google Design -
+      "Designing Adaptive Icons").  Key logo content must be inscribed in it;
+      the outer 18dp ring is bleed for system effects/parallax.
 
 Android legacy / Play Store
     - Legacy launcher icons: square PNGs with alpha, 48 dp per density.
@@ -36,8 +38,11 @@ Windows (UWP/MSIX) base asset sizes (learn.microsoft.com/.../app-icon-constructi
 ANDROID_ADAPTIVE_LAYER_DP = 108
 #: dp diameter of the guaranteed-visible (masked) viewport.
 ANDROID_MASK_VIEWPORT_DP = 72
-#: dp side of the never-clipped safe zone (central 66x66).
+#: dp diameter of the never-clipped safe zone: a centered CIRCLE of this
+#: diameter inside the 108dp layer (radius 33dp = the minimum mask reach).
 ANDROID_SAFE_ZONE_DP = 66
+#: safe-zone radius in dp (half of the diameter above).
+ANDROID_SAFE_RADIUS_DP = ANDROID_SAFE_ZONE_DP / 2.0
 
 #: px per dp at each generalized density (dpi / 160).
 ANDROID_DENSITIES_DPX = {
